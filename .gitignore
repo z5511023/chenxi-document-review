@@ -58,6 +58,9 @@ assets/*.pdf
 assets/*.png
 assets/*.jpg
 
+# pdf.js worker (copied from node_modules during build)
+public/pdf.worker.min.mjs
+
 # OS files
 .DS_Store
 .DS_Store?

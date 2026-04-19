@@ -179,7 +179,16 @@ export class ReviewAssistant {
           // 前端用 pdf.js 解析 PDF
           const arrayBuffer = await f.file.arrayBuffer();
           const pdfjsLib = await import('pdfjs-dist');
-          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          // worker 文件放在 public/ 目录，Vite 和 Express 都可直接访问
+          if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+          }
+          // 添加超时保护，避免 worker 加载失败导致无限等待
+          const pdfPromise = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+          const pdf = await Promise.race([
+            pdfPromise,
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF 解析超时，请尝试直接粘贴文本内容')), 30000))
+          ]);
           const textParts: string[] = [];
           for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i);
@@ -230,10 +239,23 @@ export class ReviewAssistant {
     try {
       // 前端解析文件 → 提取纯文本 → 发送到后端审核
       const fileContents = await this.readFileContents();
-      const combinedContent = fileContents.map(f => `=== ${f.name} ===\n${f.content}`).join('\n\n---\n\n');
+      let combinedContent = fileContents.map(f => `=== ${f.name} ===\n${f.content}`).join('\n\n---\n\n');
       this.originalFileContent = combinedContent;
 
-      // 第二步：提交审核
+      // 前端截断保护：避免 POST body 过大被生产环境反向代理拒绝 (HTTP 413)
+      // 限制文本内容为 50000 字符（约 150KB UTF-8），后端会进一步截取核心部分发给 LLM
+      const MAX_FRONTEND_CHARS = 50000;
+      let wasTruncated = false;
+      if (combinedContent.length > MAX_FRONTEND_CHARS) {
+        const headLen = Math.floor(MAX_FRONTEND_CHARS * 0.8);
+        const tailLen = MAX_FRONTEND_CHARS - headLen;
+        combinedContent = combinedContent.substring(0, headLen)
+          + '\n\n[... 中间内容因长度限制已省略 ...]\n\n'
+          + combinedContent.substring(combinedContent.length - tailLen);
+        wasTruncated = true;
+      }
+
+      // 提交审核
       const response = await this.fetchWithTimeout('/api/review', {
         method: 'POST', headers: this.authHeaders(),
         body: JSON.stringify({ fileName: fileContents.map(f=>f.name).join(', '), fileContent: combinedContent, reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role }),
@@ -243,6 +265,7 @@ export class ReviewAssistant {
         this.currentReview = { id: data.id, file_name: data.fileName, review_type: data.reviewType, review_mode: data.reviewMode, user_role: this.role, status: 'completed', result: data.result, created_at: new Date().toISOString() };
         this.reviewMeta = { knowledgeUsed: data.knowledgeUsed, knowledgeChunks: data.knowledgeChunks, knowledgeDatasets: data.knowledgeDatasets, webSearchUsed: data.webSearchUsed, webSearchResults: data.webSearchResults };
         this.resultTab = 'comparison';
+        if (wasTruncated) { console.warn('文件内容较长，已截取核心部分进行审核。如需完整审核，请拆分为多个文件。'); }
       } else { alert(data.error || '审核失败'); }
     } catch (err) {
       console.error('审核失败:', err);

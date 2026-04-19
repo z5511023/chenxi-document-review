@@ -4,14 +4,16 @@
 
 **产品名称**: 辰溪工程文件审核助手
 **所属项目**: 辰溪抽水蓄能电站数字化管控平台
-**版本**: V5.0
-**技术栈**: Vite + TypeScript + Tailwind CSS + Express + Supabase + LLM + Knowledge + Web Search
+**版本**: V5.1
+**技术栈**: Vite + TypeScript + Tailwind CSS + Express + Supabase + LLM + Knowledge + Web Search + pdf.js + JSZip
 
 ## 技术架构
 
 ```
 用户浏览器
    ↓ 登录（admin/普通用户/游客）
+   ↓ 上传文件 → 前端解析（pdf.js/JSZip/File.text）→ 提取纯文本
+   ↓ JSON POST 纯文本到 /api/review（不传文件，避免 HTTP 413）
 Express 后端 (5000端口)
    ↓ ① 按审核类型检索对应模块知识库（人员/企业/技术/安全/公文）
    ↓ ② 知识库不足时 → 联网搜索补全最新法规
@@ -34,6 +36,8 @@ Express 后端 (5000端口)
 ## 目录结构
 
 ```
+├── public/                  # 静态资源（pdf.js worker 等）
+│   └── pdf.worker.min.mjs  # pdf.js Web Worker（构建时从 node_modules 复制）
 ├── server/                  # 后端服务
 │   ├── routes/index.ts     # API 路由（含认证、用户管理、审核、知识库）
 │   ├── src/storage/database/
@@ -76,7 +80,7 @@ Express 后端 (5000端口)
 
 | 方法 | 路径 | 说明 | 权限 |
 |------|------|------|------|
-| POST | /api/review | 提交审核（LLM+知识库+联网搜索+错别字检测） | 需登录 |
+| POST | /api/review | 提交审核（前端解析纯文本 → LLM+知识库+联网搜索+错别字检测） | 需登录 |
 | GET | /api/reviews | 获取审核历史（普通用户仅自己，admin看全部） | 需登录 |
 | GET | /api/reviews/:id | 获取审核详情 | 需登录 |
 | DELETE | /api/reviews/:id | 删除审核记录 | 需登录 |
@@ -170,11 +174,37 @@ Express 后端 (5000端口)
 
 ```bash
 pnpm install     # 安装依赖
-pnpm dev         # 启动开发服务器
-pnpm build       # 构建生产版本
+pnpm dev         # 启动开发服务器（自动复制 pdf.js worker）
+pnpm build       # 构建生产版本（自动复制 pdf.js worker）
 ```
 
 ## 端口规范
 
 - Web 服务: 5000
 - HMR WebSocket: 6000
+
+## 关键注意事项
+
+### 文件上传架构（重要）
+
+**生产环境反向代理对 POST body 有大小限制**，以下方案均不可用：
+- ❌ `multipart/form-data` + multer/formidable → HTTP 413
+- ❌ `base64 + JSON POST` → HTTP 413（base64 膨胀 33%）
+
+**当前方案：前端浏览器内解析文件，只发送纯文本**
+- PDF → `pdfjs-dist`（worker 在 `public/pdf.worker.min.mjs`）
+- Word (.docx) → `JSZip` 解压读 `word/document.xml`
+- 图片 → base64 编码
+- 纯文本 → `File.text()` 直接读取
+- 前端截断保护：50000 字符限制
+- 后端进一步截断：快速模式 15000 / 详细模式 30000 字符
+
+### pdf.js Worker 配置
+
+Worker 文件通过构建脚本自动从 `node_modules` 复制到 `public/` 目录：
+- 开发环境：`scripts/dev.sh` 中 `cp -n node_modules/... public/`
+- 生产构建：`scripts/build.sh` 中 `cp node_modules/... public/`
+- Vite 构建时自动将 `public/` 内容复制到 `dist/`
+- 代码中引用路径：`/pdf.worker.min.mjs`（绝对路径）
+
+**不要使用** `new URL('pdfjs-dist/...', import.meta.url)` 方式配置 worker，Vite 无法正确解析 bare module specifier。

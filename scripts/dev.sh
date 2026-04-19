@@ -29,6 +29,11 @@ kill_port_if_listening() {
 
 echo "Clearing port ${PORT} before start."
 kill_port_if_listening
+
+echo "Ensuring pdf.js worker is available..."
+mkdir -p public
+cp -n node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs 2>/dev/null || true
+
 echo "Starting express + Vite dev server on port ${PORT}..."
 
 PORT=$PORT pnpm tsx watch server/server.ts

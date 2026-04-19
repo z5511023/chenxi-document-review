@@ -8,6 +8,10 @@ cd "${COZE_WORKSPACE_PATH}"
 echo "Installing dependencies..."
 pnpm install --loglevel warn
 
+echo "Copying pdf.js worker to public..."
+mkdir -p public
+cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs
+
 echo "Building frontend with Vite..."
 pnpm vite build
 
