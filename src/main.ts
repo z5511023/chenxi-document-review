@@ -156,26 +156,28 @@ export class ReviewAssistant {
     this.render();
   }
 
-  private async readFileContent(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      if (file.type.startsWith('image/')) reader.readAsDataURL(file); else reader.readAsText(file);
-    });
+  /** 上传文件到后端解析（PDF/Word/图片等） */
+  private async uploadAndParseFiles(): Promise<{ name: string; content: string }[]> {
+    const formData = new FormData();
+    for (const f of this.files) {
+      formData.append('files', f.file, f.name);
+    }
+    const response = await fetch('/api/parse-file', { method: 'POST', body: formData });
+    const data = await response.json();
+    if (data.success && data.files) return data.files;
+    throw new Error(data.error || '文件解析失败');
   }
 
   async startReview() {
     if (this.files.length === 0) { alert('请先上传文件'); return; }
     this.isReviewing = true; this.render();
     try {
-      const fileContents: { name: string; content: string }[] = [];
-      for (const f of this.files) {
-        const content = await this.readFileContent(f.file);
-        fileContents.push({ name: f.name, content: f.type.startsWith('image/') ? `[图片: ${f.name}]\n${content}` : content });
-      }
-      const combinedContent = fileContents.map(f => f.content).join('\n\n---\n\n');
+      // 第一步：上传文件到后端解析
+      const fileContents = await this.uploadAndParseFiles();
+      const combinedContent = fileContents.map(f => `=== ${f.name} ===\n${f.content}`).join('\n\n---\n\n');
       this.originalFileContent = combinedContent;
+
+      // 第二步：提交审核
       const response = await fetch('/api/review', {
         method: 'POST', headers: this.authHeaders(),
         body: JSON.stringify({ fileName: fileContents.map(f=>f.name).join(', '), fileContent: combinedContent, reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role }),
@@ -186,7 +188,10 @@ export class ReviewAssistant {
         this.reviewMeta = { knowledgeUsed: data.knowledgeUsed, knowledgeChunks: data.knowledgeChunks, knowledgeDatasets: data.knowledgeDatasets, webSearchUsed: data.webSearchUsed, webSearchResults: data.webSearchResults };
         this.resultTab = 'comparison';
       } else { alert(data.error || '审核失败'); }
-    } catch { alert('网络异常'); }
+    } catch (err) {
+      console.error('审核失败:', err);
+      alert('审核失败：' + (err instanceof Error ? err.message : '网络异常'));
+    }
     this.isReviewing = false; this.files = []; await this.loadHistoryFromDB();
   }
 
@@ -740,7 +745,7 @@ export class ReviewAssistant {
 
   private renderLoadingOverlay(): string {
     const tc = REVIEW_TYPES[this.reviewType];
-    return `<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"><div class="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center"><div class="w-14 h-14 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-5"></div><h3 class="font-semibold text-gray-900 mb-2">AI 智能审核中</h3><div class="space-y-1.5 text-sm text-gray-500 mb-4"><div>📚 检索「${tc?.datasetName||'知识库'}」...</div><div>🔴 检测错别字...</div><div>🤖 AI 对比标注...</div></div><div class="w-full bg-gray-100 rounded-full h-1.5"><div class="h-1.5 bg-blue-600 rounded-full animate-pulse" style="width:60%"></div></div></div></div>`;
+    return `<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"><div class="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center"><div class="w-14 h-14 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-5"></div><h3 class="font-semibold text-gray-900 mb-2">AI 智能审核中</h3><div class="space-y-1.5 text-sm text-gray-500 mb-4"><div>📄 解析文件内容...</div><div>📚 检索「${tc?.datasetName||'知识库'}」...</div><div>🔴 检测错别字...</div><div>🤖 AI 对比标注...</div></div><div class="w-full bg-gray-100 rounded-full h-1.5"><div class="h-1.5 bg-blue-600 rounded-full animate-pulse" style="width:60%"></div></div></div></div>`;
   }
 
   private renderImportingOverlay(): string {

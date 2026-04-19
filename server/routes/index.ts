@@ -2,12 +2,26 @@ import { Router } from 'express';
 import { LLMClient, Config as LLMConfig, HeaderUtils, KnowledgeClient, DataSourceType, SearchClient } from 'coze-coding-dev-sdk';
 import type { KnowledgeDocument } from 'coze-coding-dev-sdk';
 import type { Request, Response, NextFunction } from 'express';
+import multer from 'multer';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { writeFile, unlink, mkdir } from 'fs/promises';
+import path from 'path';
 import { getSupabaseClient } from '../src/storage/database/supabase-client';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any;
 
 const router = Router();
+const execFileAsync = promisify(execFile);
+
+// multer 内存存储，用于文件上传解析
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+// Python PDF 解析脚本路径（使用源码目录的绝对路径，确保开发/生产环境都能找到）
+const PDF_PARSER_SCRIPT = process.env.COZE_WORKSPACE_PATH
+  ? path.join(process.env.COZE_WORKSPACE_PATH, 'server', 'src', 'pdf-parser.py')
+  : path.join(__dirname, '..', 'src', 'pdf-parser.py');
 
 // ==================== 审核类型 → 知识库数据集映射 ====================
 const DATASET_MAP: Record<string, string[]> = {
@@ -252,6 +266,89 @@ async function searchWeb(
     return { context: '', used: false, results: 0 };
   }
 }
+
+// ==================== 文件上传解析 ====================
+router.post('/api/parse-file', upload.array('files', 10), async (req: Request, res: Response) => {
+  try {
+    const files = req.files as Express.Multer.File[];
+    if (!files || files.length === 0) {
+      res.status(400).json({ error: '未上传文件' });
+      return;
+    }
+
+    const results: { name: string; content: string; pages?: number }[] = [];
+    const tmpFiles: string[] = [];
+
+    try {
+      for (const file of files) {
+        const ext = file.originalname.split('.').pop()?.toLowerCase() || '';
+
+        if (ext === 'pdf' || file.mimetype === 'application/pdf') {
+          // PDF → 保存临时文件 → Python PyMuPDF 解析
+          const tmpPath = path.join('/tmp', `pdf_${Date.now()}_${Math.random().toString(36).slice(2)}.pdf`);
+          tmpFiles.push(tmpPath);
+          await writeFile(tmpPath, file.buffer);
+
+          try {
+            // 大文件自动跳过审批表和目录（Python脚本自动检测）
+            const maxPages = file.size > 5 * 1024 * 1024 ? 50 : 0;
+            console.log('PDF parse: script=', PDF_PARSER_SCRIPT, 'tmpPath=', tmpPath, 'maxPages=', maxPages);
+            const { stdout, stderr } = await execFileAsync('python3', [PDF_PARSER_SCRIPT, tmpPath, String(maxPages), '0'], {
+              maxBuffer: 50 * 1024 * 1024,
+              timeout: 60000,
+            });
+            if (stderr) console.error('PDF parser stderr:', stderr.substring(0, 500));
+            const parseResult = JSON.parse(stdout);
+            if (parseResult.error) {
+              results.push({ name: file.originalname, content: `[PDF解析失败: ${parseResult.error}，请尝试上传文字版PDF或直接粘贴文本]` });
+            } else {
+              results.push({ name: file.originalname, content: parseResult.text || '[PDF解析结果为空，可能为扫描件]', pages: parseResult.pages });
+            }
+          } catch (parseErr) {
+            console.error('PDF parse exec error:', parseErr instanceof Error ? parseErr.message : String(parseErr));
+            results.push({ name: file.originalname, content: '[PDF解析失败，请尝试上传文字版PDF或直接粘贴文本内容]' });
+          }
+        } else if (['doc', 'docx'].includes(ext) || file.mimetype.includes('word') || file.mimetype.includes('document')) {
+          // Word 文件：读取 zip 中的 word/document.xml
+          try {
+            const JSZip = await import('jszip');
+            const zip = await JSZip.default.loadAsync(file.buffer);
+            const docXml = zip.file('word/document.xml');
+            if (docXml) {
+              const xmlContent = await docXml.async('string');
+              const text = xmlContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+              results.push({ name: file.originalname, content: text || '[Word文档解析结果为空]' });
+            } else {
+              results.push({ name: file.originalname, content: '[Word文档结构异常，未找到正文内容]' });
+            }
+          } catch {
+            results.push({ name: file.originalname, content: '[Word文档解析失败，请尝试导出为PDF后上传或直接粘贴文本]' });
+          }
+        } else if (['xls', 'xlsx'].includes(ext) || file.mimetype.includes('sheet') || file.mimetype.includes('excel')) {
+          results.push({ name: file.originalname, content: '[Excel文件暂不支持直接解析，请导出为PDF后上传或直接粘贴关键数据]' });
+        } else if (file.mimetype.startsWith('image/')) {
+          // 图片转 base64（供多模态模型使用）
+          const base64 = file.buffer.toString('base64');
+          results.push({ name: file.originalname, content: `[图片: ${file.originalname}]\ndata:${file.mimetype};base64,${base64}` });
+        } else {
+          // 其他文本文件直接读取
+          const text = file.buffer.toString('utf-8');
+          results.push({ name: file.originalname, content: text });
+        }
+      }
+    } finally {
+      // 清理临时文件
+      for (const tmp of tmpFiles) {
+        try { await unlink(tmp); } catch { /* ignore */ }
+      }
+    }
+
+    res.json({ success: true, files: results });
+  } catch (error) {
+    console.error('File parse error:', error);
+    res.status(500).json({ error: '文件解析失败' });
+  }
+});
 
 // ==================== 健康检查 ====================
 router.get('/api/health', async (_req: Request, res: Response) => {
@@ -569,10 +666,22 @@ router.post('/api/review', requireAuth, async (req: Request, res: Response) => {
       : '\n\n详细审核模式，全面深入审核，必须包含annotatedContent。';
     systemPrompt += contextSection;
 
-    const maxContentLength = reviewMode === 'detailed' ? 15000 : 8000;
+    // 智能截取：PDF已自动跳过审批表/目录，这里只需截断
+    const maxContentLength = reviewMode === 'detailed' ? 30000 : 15000;
+    let contentToSend = fileContent;
+
+    if (fileContent.length > maxContentLength) {
+      // 取前部核心内容 + 尾部结论部分
+      const headLen = Math.floor(maxContentLength * 0.8);
+      const tailLen = maxContentLength - headLen;
+      contentToSend = fileContent.substring(0, headLen)
+        + '\n\n[... 中间内容省略 ...]\n\n'
+        + fileContent.substring(fileContent.length - tailLen);
+    }
+
     const messages = [
       { role: 'system' as const, content: systemPrompt },
-      { role: 'user' as const, content: `请审核以下文件：\n\n文件名：${fileName}\n审核类型：${reviewType}\n审核模式：${reviewMode}\n用户角色：${userRole || 'general'}\n\n文件内容：\n${fileContent.substring(0, maxContentLength)}` },
+      { role: 'user' as const, content: `请审核以下文件：\n\n文件名：${fileName}\n审核类型：${reviewType}\n审核模式：${reviewMode}\n用户角色：${userRole || 'general'}\n文件总长度：${fileContent.length}字（${fileContent.length > maxContentLength ? '已截取核心部分' : '完整内容'}）\n\n文件内容：\n${contentToSend}` },
     ];
 
     let fullContent = '';
