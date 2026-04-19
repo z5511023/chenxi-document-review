@@ -169,11 +169,28 @@ export class ReviewAssistant {
   }
 
   private async uploadAndParseFiles(): Promise<{ name: string; content: string }[]> {
-    const formData = new FormData();
+    // 将文件读取为 base64，通过 JSON 发送（绕过反向代理对 multipart 的限制）
+    const fileData: { name: string; data: string; type: string }[] = [];
     for (const f of this.files) {
-      formData.append('files', f.file, f.name);
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          // data:mime/type;base64,XXXXX → 只取 base64 部分
+          const base64Part = result.split(',')[1];
+          resolve(base64Part);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(f.file);
+      });
+      fileData.push({ name: f.name, data: base64, type: f.file.type });
     }
-    const response = await this.fetchWithTimeout('/api/parse-file', { method: 'POST', body: formData }, 60000);
+
+    const response = await this.fetchWithTimeout('/api/parse-file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: fileData }),
+    }, 60000);
     if (!response.ok) throw new Error(`文件上传失败 (HTTP ${response.status})`);
     const data = await response.json();
     if (data.success && data.files) return data.files;

@@ -2,10 +2,9 @@ import { Router } from 'express';
 import { LLMClient, Config as LLMConfig, HeaderUtils, KnowledgeClient, DataSourceType, SearchClient } from 'coze-coding-dev-sdk';
 import type { KnowledgeDocument } from 'coze-coding-dev-sdk';
 import type { Request, Response, NextFunction } from 'express';
-import formidable from 'formidable';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { writeFile, unlink, readFile } from 'fs/promises';
+import { writeFile, unlink } from 'fs/promises';
 import path from 'path';
 import { getSupabaseClient } from '../src/storage/database/supabase-client';
 
@@ -14,13 +13,6 @@ type AnyClient = any;
 
 const router = Router();
 const execFileAsync = promisify(execFile);
-
-// formidable 配置（替代 multer）
-const FORM_OPTIONS: formidable.Options = {
-  maxFileSize: 20 * 1024 * 1024,
-  multiples: true,
-  keepExtensions: true,
-};
 
 // Python PDF 解析脚本路径
 const PDF_PARSER_SCRIPT = process.env.COZE_WORKSPACE_PATH
@@ -289,48 +281,46 @@ async function searchWeb(
 
 // ==================== 文件上传解析 ====================
 router.post('/api/parse-file', async (req: Request, res: Response) => {
-  // 设置超时保护
   req.setTimeout(60000);
   res.setTimeout(60000);
 
   console.log('[parse-file] Request received, content-type:', req.headers['content-type']);
 
   try {
-    const form = formidable(FORM_OPTIONS);
-    console.log('[parse-file] Starting form.parse()...');
-    const [, files] = await form.parse(req);
-    console.log('[parse-file] form.parse() completed, files:', Object.keys(files));
-    const uploadedFiles = files.files; // 前端 FormData 用 'files' 作为字段名
+    const { files } = req.body as { files?: { name: string; data: string; type: string }[] };
 
-    if (!uploadedFiles || uploadedFiles.length === 0) {
-      console.log('[parse-file] No files found in upload');
+    if (!files || files.length === 0) {
+      console.log('[parse-file] No files in request body');
       res.status(400).json({ error: '未上传文件' });
       return;
     }
 
-    console.log('[parse-file] Files received:', uploadedFiles.map(f => ({ name: f.originalFilename, size: f.size })));
+    console.log('[parse-file] Files received:', files.map(f => ({ name: f.name, type: f.type, dataLength: f.data?.length })));
 
     const results: { name: string; content: string; pages?: number }[] = [];
     const tmpFiles: string[] = [];
 
     try {
-      for (const file of uploadedFiles) {
-        const ext = file.originalFilename?.split('.').pop()?.toLowerCase() || '';
-        const filePath = file.filepath;
-        const fileBuffer = await readFile(filePath);
+      for (const file of files) {
+        const ext = file.name.split('.').pop()?.toLowerCase() || '';
+        // base64 → Buffer
+        const fileBuffer = Buffer.from(file.data, 'base64');
+        console.log(`[parse-file] Processing ${file.name}, ext=${ext}, bufferSize=${fileBuffer.length}`);
 
-        if (ext === 'pdf' || file.mimetype === 'application/pdf') {
-          // PDF 解析：优先 Python PyMuPDF，降级 pdf-parse
+        if (ext === 'pdf' || file.type === 'application/pdf') {
           let parsedText = '';
           let pageCount = 0;
 
           try {
             const usePython = await isPythonAvailable();
             if (usePython) {
-              tmpFiles.push(filePath); // 延迟清理，Python 需要读文件
+              // 保存到临时文件给 Python 读取
+              const tmpPath = path.join('/tmp', `pdf_${Date.now()}_${Math.random().toString(36).slice(2)}.pdf`);
+              tmpFiles.push(tmpPath);
+              await writeFile(tmpPath, fileBuffer);
               try {
-                const maxPages = file.size > 5 * 1024 * 1024 ? 50 : 0;
-                const { stdout, stderr } = await execFileAsync('python3', [PDF_PARSER_SCRIPT, filePath, String(maxPages), '0'], {
+                const maxPages = fileBuffer.length > 5 * 1024 * 1024 ? 50 : 0;
+                const { stdout, stderr } = await execFileAsync('python3', [PDF_PARSER_SCRIPT, tmpPath, String(maxPages), '0'], {
                   maxBuffer: 50 * 1024 * 1024,
                   timeout: 30000,
                 });
@@ -345,9 +335,9 @@ router.post('/api/parse-file', async (req: Request, res: Response) => {
               }
             }
 
-            // 降级：使用 Node.js pdf-parse
+            // 降级：pdf-parse
             if (!parsedText) {
-              console.log('Using Node.js pdf-parse fallback');
+              console.log('[parse-file] Using pdf-parse fallback');
               const pdfParse = (await import('pdf-parse')).default;
               const data = await pdfParse(fileBuffer);
               parsedText = data.text || '';
@@ -358,12 +348,11 @@ router.post('/api/parse-file', async (req: Request, res: Response) => {
           }
 
           if (parsedText) {
-            results.push({ name: file.originalFilename || 'unknown.pdf', content: parsedText, pages: pageCount });
+            results.push({ name: file.name, content: parsedText, pages: pageCount });
           } else {
-            results.push({ name: file.originalFilename || 'unknown.pdf', content: '[PDF解析结果为空，可能为扫描件，请尝试上传文字版PDF或直接粘贴文本内容]' });
+            results.push({ name: file.name, content: '[PDF解析结果为空，可能为扫描件，请尝试上传文字版PDF或直接粘贴文本内容]' });
           }
-        } else if (['doc', 'docx'].includes(ext) || file.mimetype?.includes('word') || file.mimetype?.includes('document')) {
-          // Word 文件：读取 zip 中的 word/document.xml
+        } else if (['doc', 'docx'].includes(ext) || file.type?.includes('word') || file.type?.includes('document')) {
           try {
             const JSZip = (await import('jszip')).default;
             const zip = await JSZip.loadAsync(fileBuffer);
@@ -371,37 +360,31 @@ router.post('/api/parse-file', async (req: Request, res: Response) => {
             if (docXml) {
               const xmlContent = await docXml.async('string');
               const text = xmlContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-              results.push({ name: file.originalFilename || 'unknown.docx', content: text || '[Word文档解析结果为空]' });
+              results.push({ name: file.name, content: text || '[Word文档解析结果为空]' });
             } else {
-              results.push({ name: file.originalFilename || 'unknown.docx', content: '[Word文档结构异常，未找到正文内容]' });
+              results.push({ name: file.name, content: '[Word文档结构异常，未找到正文内容]' });
             }
           } catch {
-            results.push({ name: file.originalFilename || 'unknown.docx', content: '[Word文档解析失败，请尝试导出为PDF后上传或直接粘贴文本]' });
+            results.push({ name: file.name, content: '[Word文档解析失败，请尝试导出为PDF后上传或直接粘贴文本]' });
           }
-        } else if (['xls', 'xlsx'].includes(ext) || file.mimetype?.includes('sheet') || file.mimetype?.includes('excel')) {
-          results.push({ name: file.originalFilename || 'unknown.xlsx', content: '[Excel文件暂不支持直接解析，请导出为PDF后上传或直接粘贴关键数据]' });
-        } else if (file.mimetype?.startsWith('image/')) {
-          // 图片转 base64（供多模态模型使用）
-          const base64 = fileBuffer.toString('base64');
-          results.push({ name: file.originalFilename || 'unknown.png', content: `[图片: ${file.originalFilename}]\ndata:${file.mimetype};base64,${base64}` });
+        } else if (['xls', 'xlsx'].includes(ext) || file.type?.includes('sheet') || file.type?.includes('excel')) {
+          results.push({ name: file.name, content: '[Excel文件暂不支持直接解析，请导出为PDF后上传或直接粘贴关键数据]' });
+        } else if (file.type?.startsWith('image/')) {
+          // 图片直接用 base64
+          results.push({ name: file.name, content: `[图片: ${file.name}]\ndata:${file.type};base64,${file.data}` });
         } else {
-          // 其他文本文件直接读取
+          // 文本文件：base64 → utf-8
           const text = fileBuffer.toString('utf-8');
-          results.push({ name: file.originalFilename || 'unknown.txt', content: text });
-        }
-
-        // 清理 formidable 临时文件（非 PDF 交给 Python 的情况）
-        if (!tmpFiles.includes(filePath)) {
-          try { await unlink(filePath); } catch { /* ignore */ }
+          results.push({ name: file.name, content: text });
         }
       }
     } finally {
-      // 清理 Python 使用的临时文件
       for (const tmp of tmpFiles) {
         try { await unlink(tmp); } catch { /* ignore */ }
       }
     }
 
+    console.log('[parse-file] Done, results count:', results.length);
     res.json({ success: true, files: results });
   } catch (error) {
     console.error('File parse error:', error);
