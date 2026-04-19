@@ -8,7 +8,7 @@ export interface ReviewResult {
   conclusion: 'pass' | 'fail' | 'warning'; score: number; issues: Issue[];
   suggestions: string[]; details: string; annotatedContent?: string; references?: Reference[];
 }
-export interface Issue { level: 'high' | 'medium' | 'low'; title: string; description: string; suggestion: string; location?: string }
+export interface Issue { level: 'high' | 'medium' | 'low'; title: string; description: string; suggestion: string; location?: string; category?: 'format' | 'typo' | 'outdated_standard' | 'non_compliant' | 'missing' | 'other' }
 export interface Reference { source: 'knowledge' | 'web'; title: string; snippet: string }
 export type Role = 'general' | 'supervisor';
 export type ReviewType = 'personnel' | 'enterprise' | 'technical' | 'safety' | 'document' | 'comprehensive';
@@ -300,6 +300,7 @@ export class ReviewAssistant {
             this.updateLoadingStatus(`正在提取第 ${i}/${pdf.numPages} 页文本...`);
             const page = await pdf.getPage(i);
             const textContent = await page.getTextContent();
+            const pageText = textContent.items.map((item: any) => item.str || '').join(' ');
 	            textParts.push(`【第${i}页】\n${pageText}`);
           }
           let text = textParts.join('\n\n');
@@ -405,12 +406,10 @@ export class ReviewAssistant {
       let combinedContent = '';
 
       if (hasTextContent) {
-        // 文本粘贴模式：直接使用用户粘贴的文本，无需任何文件解析
         combinedContent = this.textContent.trim();
         this.originalFileContent = combinedContent;
         console.log(`[审核] 文本粘贴模式，内容长度 ${combinedContent.length} 字符`);
       } else {
-        // 文件上传模式：前端解析文件提取文本
         console.log('[审核] 文件上传模式，开始解析文件...');
         const fileContents = await this.readFileContents();
         combinedContent = fileContents.map(f => `=== ${f.name} ===\n${f.content}`).join('\n\n---\n\n');
@@ -418,8 +417,7 @@ export class ReviewAssistant {
         console.log(`[审核] 文件解析完成，合并后内容长度 ${combinedContent.length} 字符`);
       }
 
-      // 前端截断保护：避免 POST body 过大被生产环境反向代理拒绝 (HTTP 413)
-      // 前端限制 100K 字符，后端再根据审核模式进一步截断
+      // 前端截断保护
       const MAX_FRONTEND_CHARS = 100000;
       let wasTruncated = false;
       if (combinedContent.length > MAX_FRONTEND_CHARS) {
@@ -434,7 +432,7 @@ export class ReviewAssistant {
 
       const fileName = hasTextContent ? '粘贴文本内容' : this.files.map(f => f.name).join(', ');
 
-      // 构建审核请求，包含审核依据（从管理员配置的模块约束中获取）
+      // 构建审核请求
       const reviewBody: Record<string, unknown> = {
         fileName, fileContent: combinedContent, reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role,
       };
@@ -448,82 +446,135 @@ export class ReviewAssistant {
         reviewBody.constraintContent = mc.rules.trim();
       }
 
-      // 提交审核（异步模式：POST 立即返回 recordId，前端轮询结果）
+      // === SSE 流式审核 ===
       this.updateLoadingStatus('正在提交审核...');
-      console.log(`[审核] 提交到 /api/review，类型=${this.reviewType}，模式=${this.reviewMode}，依据=${mc?.mode || 'none'}`);
-      const submitResp = await this.fetchWithTimeout('/api/review', {
-        method: 'POST', headers: this.authHeaders(),
+      console.log(`[审核] 提交到 /api/review (SSE模式)，类型=${this.reviewType}，模式=${this.reviewMode}，依据=${mc?.mode || 'none'}`);
+
+      const response = await fetch('/api/review', {
+        method: 'POST',
+        headers: { ...this.authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(reviewBody),
-      }, 30000);
-      const submitData = await submitResp.json();
-      if (!submitData.success || !submitData.id) {
-        console.error('[审核] 提交失败:', submitData);
-        alert(submitData.error || '审核提交失败');
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: '提交失败' }));
+        console.error('[审核] 提交失败:', errData);
+        alert(errData.error || '审核提交失败');
         this.isReviewing = false; this.files = []; this.textContent = ''; this.render();
         return;
       }
-      const recordId = submitData.id as string;
-      console.log(`[审核] 已提交，recordId=${recordId}，开始轮询结果`);
 
-      // 轮询审核结果（每3秒查一次，最长10分钟）
-      const POLL_INTERVAL = 3000;
-      const MAX_POLL_TIME = 600000; // 10分钟
-      const pollStart = Date.now();
-      let pollResult: Record<string, unknown> | null = null;
+      // 读取 SSE 流
+      const reader = response.body?.getReader();
+      if (!reader) {
+        alert('浏览器不支持流式响应');
+        this.isReviewing = false; this.files = []; this.textContent = ''; this.render();
+        return;
+      }
 
-      while (Date.now() - pollStart < MAX_POLL_TIME) {
-        await new Promise(r => setTimeout(r, POLL_INTERVAL));
-        try {
-          const pollResp = await this.fetchWithTimeout(`/api/reviews/${recordId}`, {
-            headers: this.authHeaders(),
-          }, 10000);
-          const pollData = await pollResp.json();
-          if (pollData.success && pollData.data) {
-            const record = pollData.data as Record<string, unknown>;
-            const status = record.status as string;
-            if (status === 'completed') {
-              pollResult = record;
-              break;
-            } else if (status === 'failed') {
-              const result = record.result as Record<string, unknown>;
-              alert('审核失败：' + ((result?.issues as Array<Record<string, string>>)?.[0]?.description) || '请稍后重试');
-              this.isReviewing = false; this.files = []; this.textContent = ''; await this.loadHistoryFromDB(); this.render();
-              return;
+      const decoder = new TextDecoder();
+      let sseBuffer = '';
+      let finalResult: Record<string, unknown> | null = null;
+      let recordId = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+
+        // 解析 SSE 事件
+        const lines = sseBuffer.split('\n');
+        sseBuffer = '';
+
+        let currentEvent = '';
+        let currentData = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.substring(7).trim();
+          } else if (line.startsWith('data: ')) {
+            currentData = line.substring(6);
+          } else if (line === '' && currentEvent && currentData) {
+            // 事件结束，处理
+            try {
+              const data = JSON.parse(currentData);
+
+              switch (currentEvent) {
+                case 'started':
+                  recordId = data.id as string;
+                  console.log(`[审核] 已启动，recordId=${recordId}`);
+                  break;
+
+                case 'progress':
+                  this.updateLoadingStatus(data.message as string || 'AI 审核中...');
+                  break;
+
+                case 'segment':
+                  this.updateLoadingStatus(`AI 审核中... (${data.segment}/${data.totalSegments} 段已完成)`);
+                  break;
+
+                case 'completed':
+                  finalResult = data.result as Record<string, unknown>;
+                  console.log('[审核] 审核完成，结果已获取');
+                  break;
+
+                case 'error':
+                  console.error('[审核] 服务端错误:', data.error);
+                  alert('审核失败：' + (data.error || '请稍后重试'));
+                  this.isReviewing = false; this.files = []; this.textContent = ''; await this.loadHistoryFromDB(); this.render();
+                  return;
+              }
+            } catch (parseErr) {
+              console.warn('[审核] SSE 解析错误:', parseErr);
             }
-            // 更新进度
-            const result = record.result as Record<string, unknown> | undefined;
-            if (result?.progress) {
-              this.updateLoadingStatus(`AI 分析中... (${result.completedSegments || '?'}/${result.totalSegments || '?'} 段已完成)`);
-            } else {
-              this.updateLoadingStatus('AI 分析中（约30秒-5分钟）...');
-            }
+
+            currentEvent = '';
+            currentData = '';
+          } else if (line !== '' && !line.startsWith('event:') && !line.startsWith('data:')) {
+            // 不完整的行，放回缓冲区
+            sseBuffer = line + '\n';
           }
-        } catch {
-          // 轮询失败不中断，继续重试
-          console.warn('[审核] 轮询请求失败，继续重试...');
         }
       }
 
-      if (pollResult) {
-        console.log('[审核] 审核完成，结果已获取');
-        this.currentReview = pollResult as any;
-        const r = (pollResult as any).result;
+      if (finalResult) {
+        this.currentReview = { id: recordId, file_name: fileName, review_type: this.reviewType, review_mode: this.reviewMode, user_role: this.role, status: 'completed', result: finalResult as any, created_at: new Date().toISOString() };
+        const r = finalResult as any;
         this.reviewMeta = r?._meta ? { knowledgeUsed: r._meta.knowledgeUsed, knowledgeChunks: r._meta.knowledgeChunks, knowledgeDatasets: r._meta.knowledgeDatasets, webSearchUsed: r._meta.webSearchUsed, webSearchResults: r._meta.webSearchResults } : null;
         this.resultTab = 'comparison';
         if (wasTruncated) { console.warn('[审核] 内容较长，已截取核心部分进行审核。'); }
+      } else if (recordId) {
+        // SSE 流结束但没收到 completed 事件，尝试从数据库获取结果
+        console.log('[审核] SSE 流结束但未收到结果，尝试从数据库获取...');
+        this.updateLoadingStatus('正在获取审核结果...');
+        try {
+          const pollResp = await this.fetchWithTimeout(`/api/reviews/${recordId}`, { headers: this.authHeaders() }, 10000);
+          const pollData = await pollResp.json();
+          if (pollData.success && pollData.data && pollData.data.status === 'completed') {
+            this.currentReview = pollData.data;
+            const r = pollData.data.result;
+            this.reviewMeta = r?._meta ? { knowledgeUsed: r._meta.knowledgeUsed, knowledgeChunks: r._meta.knowledgeChunks, knowledgeDatasets: r._meta.knowledgeDatasets, webSearchUsed: r._meta.webSearchUsed, webSearchResults: r._meta.webSearchResults } : null;
+            this.resultTab = 'comparison';
+          } else {
+            alert('审核超时，请稍后在历史记录中查看结果。');
+          }
+        } catch {
+          alert('审核超时，请稍后在历史记录中查看结果。');
+        }
       } else {
-        alert('审核超时，请稍后在历史记录中查看结果。');
+        alert('审核未完成，请重试。');
       }
     } catch (err) {
       console.error('[审核] 审核异常:', err);
       const errMsg = err instanceof Error ? err.message : '网络异常';
       if (errMsg.includes('Failed to fetch') || errMsg.includes('NetworkError') || errMsg.includes('abort')) {
-        alert('审核提交失败：网络连接异常。请刷新页面后重试，如果持续失败请联系管理员。');
+        alert('审核提交失败：网络连接异常。请刷新页面后重试。');
       } else {
         alert('审核失败：' + errMsg);
       }
     }
-    this.isReviewing = false; this.files = []; this.textContent = ''; await this.loadHistoryFromDB();
+    this.isReviewing = false; this.files = []; this.textContent = ''; await this.loadHistoryFromDB(); this.render();
   }
 
   async viewHistoryDetail(id: string) {
@@ -1015,7 +1066,7 @@ export class ReviewAssistant {
         </div>
         <div class="px-4 pt-2 flex gap-2 border-b border-gray-200 overflow-x-auto">
 		          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='comparison'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="comparison">📋 对比标注</button>
-		          ${issues.length > 0 ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='issues'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="issues">问题 (${issues.length})</button>` : ''}
+		          ${(result.issues && result.issues.length > 0) ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='issues'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="issues">问题 (${result.issues.length})</button>` : ''}
 		          ${result.details ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='details'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="details">分析</button>` : ''}
 		          ${(result.suggestions && result.suggestions.length > 0) ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='suggestions'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="suggestions">建议 (${result.suggestions.length})</button>` : ''}
 		          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='references'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="references">来源</button>
@@ -1044,15 +1095,19 @@ export class ReviewAssistant {
     const highlighted = annotated
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       .replace(/【🔴错别字：应改为"([^"]+)"】/g, '<mark class="bg-red-300 text-red-900 px-1 rounded font-bold border-b-2 border-red-500" title="错别字">🔴 应为"$1"</mark>')
+      .replace(/【❌过期规范：([^】]+)】/g, '<mark class="bg-purple-200 text-purple-900 px-1 rounded font-bold border-b-2 border-purple-500">⚠️ 过期规范：$1</mark>')
+      .replace(/【❌参数不合规：([^】]+)】/g, '<mark class="bg-orange-200 text-orange-900 px-1 rounded font-bold border-b-2 border-orange-500">❌ 参数不合规：$1</mark>')
       .replace(/【❌问题：([^】]+)】/g, '<mark class="bg-red-200 text-red-800 px-1 rounded font-medium">❌ $1</mark>')
       .replace(/【❌格式错误：([^】]+)】/g, '<mark class="bg-red-200 text-red-800 px-1 rounded font-medium">❌ $1</mark>')
       .replace(/【⚠️提醒：([^】]+)】/g, '<mark class="bg-yellow-200 text-yellow-800 px-1 rounded font-medium">⚠️ $1</mark>')
       .replace(/\n/g,'<br/>');
 
     const typoCount = (annotated.match(/🔴错别字/g) || []).length;
+    const outdatedCount = (annotated.match(/过期规范/g) || []).length;
+    const nonCompliantCount = (annotated.match(/参数不合规/g) || []).length;
     const errorCount = (annotated.match(/【❌/g) || []).length;
     const warnCount = (annotated.match(/【⚠️/g) || []).length;
-    const totalAnnotations = typoCount + errorCount + warnCount;
+    const totalAnnotations = typoCount + errorCount + warnCount + outdatedCount + nonCompliantCount;
     const noAnnotationHint = totalAnnotations === 0 && annotated
       ? `<div class="mb-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
           ⚠️ AI 未在文本中发现需标注的问题。如果文件确实存在问题，请尝试使用"详细审核"模式。
@@ -1067,16 +1122,55 @@ export class ReviewAssistant {
     };
     const conclusion = conclusionMap[result.conclusion || 'warning'] || conclusionMap.warning;
 
-    // 问题列表按级别分组
-    const highIssues = issues.filter(i => i.level === 'high');
-    const mediumIssues = issues.filter(i => i.level === 'medium');
-    const lowIssues = issues.filter(i => i.level === 'low');
+    // 问题列表按类别分组（优先），再按级别
+    const categoryLabels: Record<string, {icon: string; label: string; color: string; bg: string; border: string}> = {
+      format: {icon: '📐', label: '格式错误', color: 'text-red-800', bg: 'bg-red-50/50', border: 'border-red-200'},
+      typo: {icon: '✏️', label: '错别字', color: 'text-orange-800', bg: 'bg-orange-50/50', border: 'border-orange-200'},
+      outdated_standard: {icon: '📜', label: '过期规范', color: 'text-purple-800', bg: 'bg-purple-50/50', border: 'border-purple-200'},
+      non_compliant: {icon: '⛔', label: '参数不合规', color: 'text-red-800', bg: 'bg-red-50/50', border: 'border-red-300'},
+      missing: {icon: '❗', label: '内容缺失', color: 'text-amber-800', bg: 'bg-amber-50/50', border: 'border-amber-200'},
+      other: {icon: '⚠️', label: '其他问题', color: 'text-yellow-800', bg: 'bg-yellow-50/50', border: 'border-yellow-200'},
+    };
+    
+    // 按类别分组
+    const categorizedIssues: Record<string, Issue[]> = {};
+    const uncategorized: Issue[] = [];
+    for (const issue of issues) {
+      const cat = issue.category || '';
+      if (cat && categoryLabels[cat]) {
+        if (!categorizedIssues[cat]) categorizedIssues[cat] = [];
+        categorizedIssues[cat].push(issue);
+      } else {
+        uncategorized.push(issue);
+      }
+    }
+    
+    // 优先展示类别分组，然后按级别展示未分类的
+    let issuesHtml = '';
+    for (const [cat, catIssues] of Object.entries(categorizedIssues)) {
+      const cl = categoryLabels[cat];
+      issuesHtml += `<div class="border ${cl.border} rounded-lg p-2.5 ${cl.bg}"><div class="text-xs font-semibold ${cl.color} mb-1.5">${cl.icon} ${cl.label} (${catIssues.length})</div><div class="space-y-1.5">${catIssues.map(i => {
+        const levelBadge = i.level === 'high' ? '<span class="text-red-600 font-bold">🔴</span>' : i.level === 'medium' ? '<span class="text-yellow-600">⚠️</span>' : '<span class="text-blue-600">💡</span>';
+        return `<div class="text-xs">${levelBadge} <span class="font-medium ${cl.color}">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-gray-600 mt-0.5 ml-5">${i.description}</p>` : ''}</div>`;
+      }).join('')}</div></div>`;
+    }
+    // 未分类的按级别展示
+    if (uncategorized.length > 0) {
+      const highIssues = uncategorized.filter(i => i.level === 'high');
+      const mediumIssues = uncategorized.filter(i => i.level === 'medium');
+      const lowIssues = uncategorized.filter(i => i.level === 'low');
+      if (highIssues.length > 0) issuesHtml += `<div class="border border-red-200 rounded-lg p-2.5 bg-red-50/50"><div class="text-xs font-semibold text-red-700 mb-1.5">🔴 严重 (${highIssues.length})</div><div class="space-y-1.5">${highIssues.map(i => `<div class="text-xs"><span class="font-medium text-red-800">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-red-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>`;
+      if (mediumIssues.length > 0) issuesHtml += `<div class="border border-yellow-200 rounded-lg p-2.5 bg-yellow-50/50"><div class="text-xs font-semibold text-yellow-700 mb-1.5">⚠️ 中等 (${mediumIssues.length})</div><div class="space-y-1.5">${mediumIssues.map(i => `<div class="text-xs"><span class="font-medium text-yellow-800">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-yellow-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>`;
+      if (lowIssues.length > 0) issuesHtml += `<div class="border border-blue-200 rounded-lg p-2.5 bg-blue-50/50"><div class="text-xs font-semibold text-blue-700 mb-1.5">💡 轻微 (${lowIssues.length})</div><div class="space-y-1.5">${lowIssues.map(i => `<div class="text-xs"><span class="font-medium text-blue-800">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-blue-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>`;
+    }
 
     return `
       ${noAnnotationHint}
       <div class="mb-3 flex items-center gap-3 flex-wrap">
         <span class="text-xs font-medium text-gray-700">标注说明：</span>
         <span class="text-xs flex items-center gap-1"><span class="w-2.5 h-2.5 bg-red-300 rounded inline-block border border-red-500"></span> 错别字 (${typoCount})</span>
+        <span class="text-xs flex items-center gap-1"><span class="w-2.5 h-2.5 bg-purple-200 rounded inline-block border border-purple-500"></span> 过期规范 (${outdatedCount})</span>
+        <span class="text-xs flex items-center gap-1"><span class="w-2.5 h-2.5 bg-orange-200 rounded inline-block border border-orange-500"></span> 参数不合规 (${nonCompliantCount})</span>
         <span class="text-xs flex items-center gap-1"><span class="w-2.5 h-2.5 bg-red-200 rounded inline-block"></span> 错误/问题 (${errorCount})</span>
         <span class="text-xs flex items-center gap-1"><span class="w-2.5 h-2.5 bg-yellow-200 rounded inline-block"></span> 提醒 (${warnCount})</span>
       </div>
@@ -1096,9 +1190,7 @@ export class ReviewAssistant {
                 <span class="text-sm font-bold ${result.score>=80?'text-green-600':result.score>=60?'text-yellow-600':'text-red-600'}">${result.score || '--'}分</span>
               </div>
             </div>
-            ${highIssues.length > 0 ? `<div class="border border-red-200 rounded-lg p-2.5 bg-red-50/50"><div class="text-xs font-semibold text-red-700 mb-1.5">🔴 严重 (${highIssues.length})</div><div class="space-y-1.5">${highIssues.map(i => `<div class="text-xs"><span class="font-medium text-red-800">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-red-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>` : ''}
-            ${mediumIssues.length > 0 ? `<div class="border border-yellow-200 rounded-lg p-2.5 bg-yellow-50/50"><div class="text-xs font-semibold text-yellow-700 mb-1.5">⚠️ 中等 (${mediumIssues.length})</div><div class="space-y-1.5">${mediumIssues.map(i => `<div class="text-xs"><span class="font-medium text-yellow-800">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-yellow-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>` : ''}
-            ${lowIssues.length > 0 ? `<div class="border border-blue-200 rounded-lg p-2.5 bg-blue-50/50"><div class="text-xs font-semibold text-blue-700 mb-1.5">💡 轻微 (${lowIssues.length})</div><div class="space-y-1.5">${lowIssues.map(i => `<div class="text-xs"><span class="font-medium text-blue-800">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-blue-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>` : ''}
+            ${issuesHtml}
             ${suggestions.length > 0 ? `<div class="border border-gray-200 rounded-lg p-2.5 bg-gray-50"><div class="text-xs font-semibold text-gray-700 mb-1.5">💡 建议 (${suggestions.length})</div><div class="space-y-1">${suggestions.map((s:string,i:number) => `<div class="text-xs text-gray-600 flex items-start gap-1"><span class="text-blue-500 flex-shrink-0">${i+1}.</span><span>${s}</span></div>`).join('')}</div></div>` : ''}
           </div>
         </div>
@@ -1126,7 +1218,9 @@ export class ReviewAssistant {
   private renderIssue(issue: Issue): string {
     const lm: Record<string,{text:string;color:string;bg:string}> = {high:{text:'严重',color:'text-red-600',bg:'bg-red-50 border-red-200'},medium:{text:'中等',color:'text-yellow-600',bg:'bg-yellow-50 border-yellow-200'},low:{text:'轻微',color:'text-blue-600',bg:'bg-blue-50 border-blue-200'}};
     const l = lm[issue.level]||lm.medium;
-    return `<div class="border rounded-lg p-3 ${l.bg}"><div class="flex items-center gap-1.5 mb-2"><span class="px-1.5 py-0.5 text-xs font-medium rounded ${l.color} bg-white">${l.text}</span><h4 class="text-sm font-medium text-gray-900">${issue.title}</h4></div><p class="text-xs text-gray-600 mb-2">${issue.description}</p>${issue.location?`<p class="text-xs text-gray-500 mb-1">📍 ${issue.location}</p>`:''}<div class="flex items-start gap-1.5 text-xs"><span class="text-blue-600">💡</span><span class="text-gray-600">${issue.suggestion}</span></div></div>`;
+    const categoryLabels: Record<string,string> = {format:'📐格式',typo:'✏️错别字',outdated_standard:'📜过期规范',non_compliant:'⛔不合规',missing:'❗缺失',other:'⚠️其他'};
+    const catBadge = issue.category ? `<span class="px-1.5 py-0.5 text-xs font-medium rounded bg-gray-100 text-gray-600 ml-1">${categoryLabels[issue.category]||issue.category}</span>` : '';
+    return `<div class="border rounded-lg p-3 ${l.bg}"><div class="flex items-center gap-1.5 mb-2"><span class="px-1.5 py-0.5 text-xs font-medium rounded ${l.color} bg-white">${l.text}</span><h4 class="text-sm font-medium text-gray-900">${issue.title}</h4>${catBadge}</div><p class="text-xs text-gray-600 mb-2">${issue.description}</p>${issue.location?`<p class="text-xs text-gray-500 mb-1">📍 ${issue.location}</p>`:''}<div class="flex items-start gap-1.5 text-xs"><span class="text-blue-600">💡</span><span class="text-gray-600">${issue.suggestion}</span></div></div>`;
   }
 
   // ==================== 知识库 Tab ====================
@@ -1384,9 +1478,9 @@ export class ReviewAssistant {
       zone.addEventListener('click', () => input?.click());
       zone.addEventListener('dragover', (e: Event) => { e.preventDefault(); (zone as HTMLElement).classList.add('border-purple-400','bg-purple-100'); });
       zone.addEventListener('dragleave', () => { (zone as HTMLElement).classList.remove('border-purple-400','bg-purple-100'); });
-      zone.addEventListener('drop', (e: DragEvent) => {
-        e.preventDefault(); (zone as HTMLElement).classList.remove('border-purple-400','bg-purple-100');
-        const file = e.dataTransfer?.files[0];
+      zone.addEventListener('drop', (ev: Event) => { ev.preventDefault(); const de = ev as DragEvent;
+        (zone as HTMLElement).classList.remove('border-purple-400','bg-purple-100');
+        const file = de.dataTransfer?.files[0];
         if (file) this.handleConstraintFile(file, module);
       });
     });

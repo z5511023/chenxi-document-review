@@ -124,9 +124,32 @@ const REVIEW_PROMPTS: Record<string, string> = {
 
 请严格根据知识库中的公文格式标准逐项审核，以JSON格式返回，包含annotatedContent字段（格式错误用【❌格式错误：应xxx，实际xxx】标注）。`,
 
-  comprehensive: `你是辰溪抽水蓄能电站的工程文件审核专家，请对上传的文件进行全面审核。
-综合运用所有知识库的标准，从格式、内容、合规性等多维度审核。
-以JSON格式返回审核结果，包含annotatedContent字段。`,
+  comprehensive: `你是辰溪抽水蓄能电站的工程文件审核专家，专门对工程文件进行全面深入审核。
+
+审核维度（按重要性排序）：
+一、格式规范性审核
+1. 图表规范性：图例、标注、编号是否按工程制图标准绘制；表格列对齐、单元格合并是否正确
+2. 标点符号：全角/半角混用（如全角顿号､应统一为半角、）；括号、逗号全半角混用
+3. 公式与单位：上标/下标是否正确（m³→不应写为m3、mm²→不应写为mm2）；运算符前后空格统一
+4. 编号体系：章节编号是否连续无重复、无跳号；附件序号是否连续
+5. 页面排版：表格列宽、行间距是否规范
+
+二、错别字与表述错误
+1. 同音字/形近字错误（箱杆→锚杆、领析→锚杆、东立能→架立筋等）
+2. 的/地/得混用、做/作混用、即/既混用
+3. 语句不通顺或逻辑错误（"是"误写为"时"、"围岩"误写为"围堰"等）
+
+三、不符合现行国家标准/规范
+1. 规范引用过期：逐一检查引用的标准号是否已被更新版本替代，标注过期规范编号和现行替代规范编号及实施日期
+2. 技术参数不符合规范：对照现行标准检查技术指标（如半孔率、振动速度控制值等），标注具体条款和正确参数
+3. 安全与管理要求缺失：检查是否遗漏强制性安全要求
+
+四、内容完整性
+1. 签字审批流程是否完整（编制→审核→批准）
+2. 应急预案是否包含必要内容
+3. 专项施工方案是否覆盖关键工序
+
+请严格根据知识库标准及联网搜索的最新法规进行审核，以JSON格式返回结果。`,
 };
 
 // 给所有提示词加上错别字检测指令 + annotatedContent强化指令
@@ -138,11 +161,20 @@ annotatedContent 是最重要的输出字段，必须严格按要求生成：
 2. 在原文中找到每个问题/错别字的位置，用以下标记插入原文：
    - 错别字标注：【🔴错别字：应改为"正确字"】（紧跟在错别字后面）
    - 严重问题标注：【❌问题：问题描述】（紧跟在问题文字后面）
+   - 过期规范标注：【❌过期规范：应改为"现行规范编号"，实施日期YYYY.MM.DD】（紧跟在过期规范编号后面）
+   - 技术参数不合规：【❌参数不合规：依据XX标准，正确值为XXX】（紧跟在错误参数后面）
    - 提醒注意标注：【⚠️提醒：提醒内容】（紧跟在需注意的文字后面）
 3. 绝对不能只返回原始文本而不加任何标注！
 4. 绝对不能省略原文内容！
 5. 每个issue都必须在annotatedContent中有对应的标注
-6. 示例：原文"施工人员因按照规定佩戴安全帽"→ annotatedContent:"施工人员因【🔴错别字：应改为"应"】按照规定佩戴安全帽"
+6. 示例：原文"依据DL/T 5099-2011"→ annotatedContent:"依据DL/T 5099-2011【❌过期规范：应改为DL/T 5099-2021，实施日期2022.03.01】"
+
+【关键 - issues 输出规范】
+1. issues 必须分类，category 字段取值：format(格式错误)、typo(错别字)、outdated_standard(过期规范)、non_compliant(参数不合规)、missing(内容缺失)、other(其他)
+2. 每个issue必须有location字段，标注页码格式为"第X页"或"第X-Y页"
+3. 对于过期规范类问题，title格式为"过期规范：XX-YYYY"，description中包含现行替代规范编号和实施日期
+4. 对于参数不合规问题，description中包含依据的标准编号和正确参数值
+5. 对于错别字问题，title格式为"错别字：XX→YY"
 
 【关键 - issues 中的 location 字段要求】
 文件文本中包含【第N页】格式的页码标记，请在 issues 的 location 字段中标注问题所在的页码，格式为"第X页"或"第X-Y页"。
@@ -841,89 +873,104 @@ router.delete('/api/users/:id', requireAdmin, async (req: Request, res: Response
   }
 });
 
-// ==================== 提交审核 ====================
-		router.post('/api/review', requireAuth, async (req: Request, res: Response) => {
-		  try {
-		    const authReq = req as Request & { user?: AuthUser };
-		    const { fileName, fileContent, reviewType, reviewMode, userRole } = req.body;
+// ==================== 提交审核（SSE 流式响应） ====================
+			router.post('/api/review', requireAuth, async (req: Request, res: Response) => {
+			  const authReq = req as Request & { user?: AuthUser };
+			  const { fileName, fileContent, reviewType, reviewMode, userRole } = req.body;
 
-		    if (!fileName || !fileContent || !reviewType) {
-		      res.status(400).json({ error: '缺少必要参数' });
-		      return;
-		    }
+			  if (!fileName || !fileContent || !reviewType) {
+			    res.status(400).json({ error: '缺少必要参数' });
+			    return;
+			  }
 
-		    const validTypes = ['personnel', 'enterprise', 'technical', 'safety', 'document', 'comprehensive'];
-		    if (!validTypes.includes(reviewType)) {
-		      res.status(400).json({ error: '无效的审核类型' });
-		      return;
-		    }
+			  const validTypes = ['personnel', 'enterprise', 'technical', 'safety', 'document', 'comprehensive'];
+			  if (!validTypes.includes(reviewType)) {
+			    res.status(400).json({ error: '无效的审核类型' });
+			    return;
+			  }
 
-		    const supabase: AnyClient = await getSupabaseClient();
-		    const { data: record, error: dbError } = await supabase
-		      .from('review_records')
-		      .insert({
-		        file_name: fileName,
-		        review_type: reviewType,
-		        review_mode: reviewMode || 'quick',
-		        user_role: userRole || 'general',
-		        user_id: authReq.user!.id,
-		        status: 'processing',
-		      })
-		      .select('id')
-		      .single();
+			  // 设置 SSE 响应头
+			  res.writeHead(200, {
+			    'Content-Type': 'text/event-stream',
+			    'Cache-Control': 'no-cache',
+			    Connection: 'keep-alive',
+			    'X-Accel-Buffering': 'no',
+			  });
 
-		    if (dbError) {
-		      console.error('DB insert error:', dbError);
-		      res.status(500).json({ error: '创建审核记录失败' });
-		      return;
-		    }
+			  // SSE 辅助函数
+			  const sendSSE = (event: string, data: Record<string, unknown>) => {
+			    try {
+			      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+			    } catch { /* 连接已关闭 */ }
+			  };
 
-		    const recordId = record.id;
+			  let recordId = '';
 
-		    // 立即返回 recordId，审核在后台异步执行（避免长连接超时）
-		    res.json({ success: true, id: recordId, status: 'processing' });
+			  try {
+			    const supabase: AnyClient = await getSupabaseClient();
+			    const { data: record, error: dbError } = await supabase
+			      .from('review_records')
+			      .insert({
+			        file_name: fileName,
+			        review_type: reviewType,
+			        review_mode: reviewMode || 'quick',
+			        user_role: userRole || 'general',
+			        user_id: authReq.user!.id,
+			        status: 'processing',
+			      })
+			      .select('id')
+			      .single();
 
-		    // 后台异步执行审核流程
-		    setImmediate(() => {
-		      (async () => {
-		        try {
-		          const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as unknown as Headers);
+			    if (dbError) {
+			      console.error('DB insert error:', dbError);
+			      sendSSE('error', { error: '创建审核记录失败' });
+			      res.end();
+			      return;
+			    }
 
-		          const knowledgeResult = await searchKnowledge(reviewType, fileName, customHeaders);
+			    recordId = record.id;
+			    sendSSE('started', { id: recordId });
 
-		          let webSearchResult = { context: '', used: false, results: 0 };
-		          if (!knowledgeResult.used || knowledgeResult.chunks < 2) {
-		            webSearchResult = await searchWeb(reviewType, fileName, customHeaders);
-		          }
+			    // === 同步执行审核流程（SSE 保持连接活跃，FaaS 不会杀进程） ===
+			    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as unknown as Headers);
 
-		          let contextSection = '';
-		          if (knowledgeResult.used) {
-		            contextSection += `\n\n=== 知识库检索结果（模块：${knowledgeResult.datasets.join(', ')}） ===\n${knowledgeResult.context}`;
-		          }
-		          if (webSearchResult.used) {
-		            contextSection += `\n\n=== 联网搜索结果 ===\n${webSearchResult.context}`;
-		          }
-		          if (!knowledgeResult.used && !webSearchResult.used) {
-		            contextSection += '\n\n注意：知识库和联网搜索均未找到直接相关标准，请基于专业知识审核。';
-		          }
+			    sendSSE('progress', { stage: 'knowledge', message: '正在检索知识库...' });
+			    const knowledgeResult = await searchKnowledge(reviewType, fileName, customHeaders);
 
-		          let baseSystemPrompt = REVIEW_PROMPTS[reviewType] || REVIEW_PROMPTS.comprehensive;
-		          baseSystemPrompt += reviewMode === 'quick'
-		            ? '\n\n快速审核模式，重点检查关键问题和错别字，必须包含annotatedContent。'
-		            : '\n\n详细审核模式，全面深入审核，必须包含annotatedContent。';
-		          baseSystemPrompt += contextSection;
+			    let webSearchResult = { context: '', used: false, results: 0 };
+			    if (!knowledgeResult.used || knowledgeResult.chunks < 2) {
+			      sendSSE('progress', { stage: 'websearch', message: '正在联网搜索最新法规...' });
+			      webSearchResult = await searchWeb(reviewType, fileName, customHeaders);
+			    }
 
-		          const CHUNK_SIZE = reviewMode === 'detailed' ? 60000 : 40000;
-		          const { skipped, body } = skipApprovalAndTOC(fileContent);
+			    let contextSection = '';
+			    if (knowledgeResult.used) {
+			      contextSection += `\n\n=== 知识库检索结果（模块：${knowledgeResult.datasets.join(', ')}） ===\n${knowledgeResult.context}`;
+			    }
+			    if (webSearchResult.used) {
+			      contextSection += `\n\n=== 联网搜索结果 ===\n${webSearchResult.context}`;
+			    }
+			    if (!knowledgeResult.used && !webSearchResult.used) {
+			      contextSection += '\n\n注意：知识库和联网搜索均未找到直接相关标准，请基于专业知识审核。';
+			    }
 
-		          const reqBody = req.body as Record<string, unknown>;
-		          const constraintMode = reqBody.constraintMode as string | undefined;
-		          const constraintContent = reqBody.constraintContent as string | undefined;
-		          if (constraintMode && constraintContent) {
-		            if (constraintMode === 'reference') {
-		              const constraintFileName = (reqBody.constraintFileName as string) || '范文';
-		              const refText = constraintContent.substring(0, 5000);
-		              baseSystemPrompt += `
+			    let baseSystemPrompt = REVIEW_PROMPTS[reviewType] || REVIEW_PROMPTS.comprehensive;
+			    baseSystemPrompt += reviewMode === 'quick'
+			      ? '\n\n快速审核模式，重点检查关键问题和错别字，必须包含annotatedContent。'
+			      : '\n\n详细审核模式，全面深入审核，必须包含annotatedContent。';
+			    baseSystemPrompt += contextSection;
+
+			    const CHUNK_SIZE = reviewMode === 'detailed' ? 60000 : 40000;
+			    const { skipped, body } = skipApprovalAndTOC(fileContent);
+
+			    const reqBody = req.body as Record<string, unknown>;
+			    const constraintMode = reqBody.constraintMode as string | undefined;
+			    const constraintContent = reqBody.constraintContent as string | undefined;
+			    if (constraintMode && constraintContent) {
+			      if (constraintMode === 'reference') {
+			        const constraintFileName = (reqBody.constraintFileName as string) || '范文';
+			        const refText = constraintContent.substring(0, 5000);
+			        baseSystemPrompt += `
 
 【审核依据 - 范文对比】
 请将以下范文作为参考标准，对照检查待审文件与范文的差异，包括但不限于：
@@ -935,121 +982,124 @@ router.delete('/api/users/:id', requireAdmin, async (req: Request, res: Response
 范文名称：${constraintFileName}
 范文内容（前5000字）：
 ${refText}`;
-		            } else if (constraintMode === 'rules') {
-		              baseSystemPrompt += `
+			      } else if (constraintMode === 'rules') {
+			        baseSystemPrompt += `
 
 【审核依据 - 文字约束】
 请严格按照以下约束条件审核文件，对不符合约束的地方进行标注：
 ${constraintContent}`;
-		            }
-		          }
-		          console.log(`[分段审核] 原文 ${fileContent.length} 字符，跳过报审单/目录 ${skipped.length} 字符，正文 ${body.length} 字符`);
+			      }
+			    }
+			    console.log(`[分段审核] 原文 ${fileContent.length} 字符，跳过报审单/目录 ${skipped.length} 字符，正文 ${body.length} 字符`);
 
-		          const chunks = splitByChapter(body, CHUNK_SIZE);
-		          console.log(`[分段审核] 拆分为 ${chunks.length} 段，段长: ${chunks.map(c => c.content.length).join(', ')}`);
+			    const chunks = splitByChapter(body, CHUNK_SIZE);
+			    console.log(`[分段审核] 拆分为 ${chunks.length} 段，段长: ${chunks.map(c => c.content.length).join(', ')}`);
 
-		          const segmentResults: Array<Record<string, unknown>> = [];
-		          for (let i = 0; i < chunks.length; i++) {
-		            const chunk = chunks[i];
-		            const isMultiChunk = chunks.length > 1;
-		            const segmentPrompt = baseSystemPrompt + (isMultiChunk
-		              ? `\n\n【分段审核】这是文件的第 ${i + 1}/${chunks.length} 段（${chunk.title || '正文段落'}），共 ${chunk.content.length} 字符。请专注审核本段内容，标注本段的问题和错别字。`
-		              : '');
+			    const segmentResults: Array<Record<string, unknown>> = [];
+			    for (let i = 0; i < chunks.length; i++) {
+			      const chunk = chunks[i];
+			      const isMultiChunk = chunks.length > 1;
+			      const segmentPrompt = baseSystemPrompt + (isMultiChunk
+			        ? `\n\n【分段审核】这是文件的第 ${i + 1}/${chunks.length} 段（${chunk.title || '正文段落'}），共 ${chunk.content.length} 字符。请专注审核本段内容，标注本段的问题和错别字。`
+			        : '');
 
-		            const messages = [
-		              { role: 'system' as const, content: segmentPrompt },
-		              { role: 'user' as const, content: `请审核以下文件：\n\n文件名：${fileName}\n审核类型：${reviewType}\n审核模式：${reviewMode}\n用户角色：${userRole || 'general'}\n${isMultiChunk ? `分段：第 ${i + 1}/${chunks.length} 段\n` : ''}文件内容：\n${chunk.content}` },
-		            ];
+			      const messages = [
+			        { role: 'system' as const, content: segmentPrompt },
+			        { role: 'user' as const, content: `请审核以下文件：\n\n文件名：${fileName}\n审核类型：${reviewType}\n审核模式：${reviewMode}\n用户角色：${userRole || 'general'}\n${isMultiChunk ? `分段：第 ${i + 1}/${chunks.length} 段\n` : ''}文件内容：\n${chunk.content}` },
+			      ];
 
-		            console.log(`[分段审核] 审核第 ${i + 1}/${chunks.length} 段 (${chunk.content.length} 字符)...`);
-		            let fullContent = '';
-		            try {
-		              const config = new LLMConfig();
-		              const client = new LLMClient(config, customHeaders);
-		              const stream = client.stream(messages, {
-		                model: 'doubao-seed-2-0-lite-260215',
-		                temperature: reviewMode === 'detailed' ? 0.2 : 0.3,
-		              });
-		              for await (const chunk2 of stream) {
-		                if (chunk2.content) fullContent += chunk2.content.toString();
-		              }
-		            } catch (llmError) {
-		              console.error(`[分段审核] 第 ${i + 1} 段 LLM 调用失败:`, llmError);
-		              segmentResults.push({
-		                conclusion: 'warning', score: 70,
-		                issues: [{ level: 'medium', title: `第${i + 1}段审核失败`, description: 'AI 服务暂时不可用，请稍后重试' }],
-		                suggestions: ['建议对失败段落重新审核'],
-		                annotatedContent: chunk.content,
-		                _segment: i + 1, _segmentTitle: chunk.title, _failed: true,
-		              });
-		              continue;
-		            }
+			      sendSSE('progress', { stage: 'reviewing', message: `AI 审核中... (${i + 1}/${chunks.length})`, segment: i + 1, totalSegments: chunks.length });
+			      console.log(`[分段审核] 审核第 ${i + 1}/${chunks.length} 段 (${chunk.content.length} 字符)...`);
 
-		            let segResult: Record<string, unknown>;
-		            try {
-		              const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
-		              if (!jsonMatch) {
-		                const hasAnnotations = fullContent.includes('\ud83d\udd34') || fullContent.includes('\u274c') || fullContent.includes('\u26a0\ufe0f');
-		                segResult = {
-		                  conclusion: 'warning', score: 70, issues: [], suggestions: ['建议人工复核'],
-		                  details: fullContent,
-		                  annotatedContent: hasAnnotations ? fullContent : chunk.content,
-		                };
-		              } else {
-		                segResult = JSON.parse(jsonMatch[0]);
-		              }
-		            } catch {
-		              const hasAnnotations = fullContent.includes('\ud83d\udd34') || fullContent.includes('\u274c') || fullContent.includes('\u26a0\ufe0f');
-		              segResult = {
-		                conclusion: 'warning', score: 70, issues: [], suggestions: ['建议人工复核'],
-		                details: fullContent,
-		                annotatedContent: hasAnnotations ? fullContent : chunk.content,
-		              };
-		            }
-		            if (!segResult.annotatedContent) segResult.annotatedContent = chunk.content;
-		            segResult._segment = i + 1;
-		            segResult._segmentTitle = chunk.title;
-		            segmentResults.push(segResult);
-		            console.log(`[分段审核] 第 ${i + 1} 段审核完成，评分: ${segResult.score}`);
+			      let fullContent = '';
+			      try {
+			        const config = new LLMConfig();
+			        const client = new LLMClient(config, customHeaders);
+			        const stream = client.stream(messages, {
+			          model: 'doubao-seed-2-0-pro-260215',
+			          temperature: reviewMode === 'detailed' ? 0.2 : 0.3,
+			        });
+			        for await (const chunk2 of stream) {
+			          if (chunk2.content) fullContent += chunk2.content.toString();
+			        }
+			      } catch (llmError) {
+			        console.error(`[分段审核] 第 ${i + 1} 段 LLM 调用失败:`, llmError);
+			        segmentResults.push({
+			          conclusion: 'warning', score: 70,
+			          issues: [{ level: 'medium', title: `第${i + 1}段审核失败`, description: 'AI 服务暂时不可用，请稍后重试' }],
+			          suggestions: ['建议对失败段落重新审核'],
+			          annotatedContent: chunk.content,
+			          _segment: i + 1, _segmentTitle: chunk.title, _failed: true,
+			        });
+			        continue;
+			      }
 
-		            // 更新进度到数据库（前端轮询可感知）
-		            const progress = Math.round(((i + 1) / chunks.length) * 100);
-		            await supabase.from('review_records').update({
-		              status: 'processing',
-		              result: { progress, completedSegments: i + 1, totalSegments: chunks.length } as any,
-		            }).eq('id', recordId);
-		          }
+			      let segResult: Record<string, unknown>;
+			      try {
+			        const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
+			        if (!jsonMatch) {
+			          const hasAnnotations = fullContent.includes('\ud83d\udd34') || fullContent.includes('\u274c') || fullContent.includes('\u26a0\ufe0f');
+			          segResult = {
+			            conclusion: 'warning', score: 70, issues: [], suggestions: ['建议人工复核'],
+			            details: fullContent,
+			            annotatedContent: hasAnnotations ? fullContent : chunk.content,
+			          };
+			        } else {
+			          segResult = JSON.parse(jsonMatch[0]);
+			        }
+			      } catch {
+			        const hasAnnotations = fullContent.includes('\ud83d\udd34') || fullContent.includes('\u274c') || fullContent.includes('\u26a0\ufe0f');
+			        segResult = {
+			          conclusion: 'warning', score: 70, issues: [], suggestions: ['建议人工复核'],
+			          details: fullContent,
+			          annotatedContent: hasAnnotations ? fullContent : chunk.content,
+			        };
+			      }
+			      if (!segResult.annotatedContent) segResult.annotatedContent = chunk.content;
+			      segResult._segment = i + 1;
+			      segResult._segmentTitle = chunk.title;
+			      segmentResults.push(segResult);
+			      console.log(`[分段审核] 第 ${i + 1} 段审核完成，评分: ${segResult.score}`);
 
-		          const result = mergeSegmentResults(segmentResults, fileContent, skipped);
-		          console.log(`[分段审核] 合并完成，最终评分: ${result.score}，问题数: ${(result.issues as Array<unknown>)?.length || 0}`);
+			      // 发送段完成事件
+			      sendSSE('segment', { segment: i + 1, totalSegments: chunks.length, score: segResult.score });
+			    }
 
-		          (result as any)._meta = {
-		            knowledgeUsed: knowledgeResult.used, knowledgeChunks: knowledgeResult.chunks,
-		            knowledgeDatasets: knowledgeResult.datasets,
-		            webSearchUsed: webSearchResult.used, webSearchResults: webSearchResult.results,
-		            totalSegments: chunks.length, totalChars: fileContent.length, bodyChars: body.length,
-		          };
+			    const result = mergeSegmentResults(segmentResults, fileContent, skipped);
+			    console.log(`[分段审核] 合并完成，最终评分: ${result.score}，问题数: ${(result.issues as Array<unknown>)?.length || 0}`);
 
-		          await supabase.from('review_records').update({ status: 'completed', result, updated_at: new Date().toISOString() }).eq('id', recordId);
-		          console.log(`[异步审核] recordId=${recordId} 完成`);
-		        } catch (error) {
-		          console.error(`[异步审核] recordId=${recordId} 失败:`, error);
-		          await supabase.from('review_records').update({
-		            status: 'failed',
-		            result: { conclusion: 'fail', score: 0, issues: [{ level: 'high', title: '审核失败', description: String(error) }], suggestions: ['请稍后重试'] } as any,
-		            updated_at: new Date().toISOString(),
-		          }).eq('id', recordId);
-		        }
-		      })();
-		    });
-		  } catch (error) {
-		    console.error('Review API error:', error);
-		    if (!res.headersSent) {
-		      res.status(500).json({ error: '审核服务异常' });
-		    }
-		  }
-		});
-	// ==================== 获取审核历史列表（仅返回当前用户的） ====================
+			    (result as any)._meta = {
+			      knowledgeUsed: knowledgeResult.used, knowledgeChunks: knowledgeResult.chunks,
+			      knowledgeDatasets: knowledgeResult.datasets,
+			      webSearchUsed: webSearchResult.used, webSearchResults: webSearchResult.results,
+			      totalSegments: chunks.length, totalChars: fileContent.length, bodyChars: body.length,
+			    };
+
+			    // 存入数据库
+			    await supabase.from('review_records').update({ status: 'completed', result, updated_at: new Date().toISOString() }).eq('id', recordId);
+			    console.log(`[审核完成] recordId=${recordId}，评分=${result.score}`);
+
+			    // 发送完成事件
+			    sendSSE('completed', { id: recordId, result });
+			    res.end();
+			  } catch (error) {
+			    console.error(`[审核失败] recordId=${recordId}:`, error);
+			    // 更新数据库状态
+			    if (recordId) {
+			      try {
+			        const supabase: AnyClient = await getSupabaseClient();
+			        await supabase.from('review_records').update({
+			          status: 'failed',
+			          result: { conclusion: 'fail', score: 0, issues: [{ level: 'high', title: '审核失败', description: String(error) }], suggestions: ['请稍后重试'] } as any,
+			          updated_at: new Date().toISOString(),
+			        }).eq('id', recordId);
+			      } catch { /* 忽略数据库更新错误 */ }
+			    }
+			    sendSSE('error', { error: String(error) });
+			    res.end();
+			  }
+			});
+// ==================== 获取审核历史列表（仅返回当前用户的） ====================
 router.get('/api/reviews', requireAuth, async (req: Request, res: Response) => {
   try {
     const authReq = req as Request & { user?: AuthUser };
