@@ -449,31 +449,77 @@ export class ReviewAssistant {
         reviewBody.constraintContent = mc.rules.trim();
       }
 
-      // 提交审核
-      this.updateLoadingStatus('正在提交审核，AI 分析中（约30秒-2分钟）...');
+      // 提交审核（异步模式：POST 立即返回 recordId，前端轮询结果）
+      this.updateLoadingStatus('正在提交审核...');
       console.log(`[审核] 提交到 /api/review，类型=${this.reviewType}，模式=${this.reviewMode}，依据=${mc?.mode || 'none'}`);
-      const response = await this.fetchWithTimeout('/api/review', {
+      const submitResp = await this.fetchWithTimeout('/api/review', {
         method: 'POST', headers: this.authHeaders(),
         body: JSON.stringify(reviewBody),
-      }, 120000);
-      console.log(`[审核] API 响应状态: ${response.status}`);
-      const data = await response.json();
-      if (data.success && data.result) {
-        console.log('[审核] 审核成功，结果已返回');
-        this.currentReview = { id: data.id, file_name: data.fileName, review_type: data.reviewType, review_mode: data.reviewMode, user_role: this.role, status: 'completed', result: data.result, created_at: new Date().toISOString() };
-        this.reviewMeta = { knowledgeUsed: data.knowledgeUsed, knowledgeChunks: data.knowledgeChunks, knowledgeDatasets: data.knowledgeDatasets, webSearchUsed: data.webSearchUsed, webSearchResults: data.webSearchResults };
+      }, 30000);
+      const submitData = await submitResp.json();
+      if (!submitData.success || !submitData.id) {
+        console.error('[审核] 提交失败:', submitData);
+        alert(submitData.error || '审核提交失败');
+        this.isReviewing = false; this.files = []; this.textContent = ''; this.render();
+        return;
+      }
+      const recordId = submitData.id as string;
+      console.log(`[审核] 已提交，recordId=${recordId}，开始轮询结果`);
+
+      // 轮询审核结果（每3秒查一次，最长10分钟）
+      const POLL_INTERVAL = 3000;
+      const MAX_POLL_TIME = 600000; // 10分钟
+      const pollStart = Date.now();
+      let pollResult: Record<string, unknown> | null = null;
+
+      while (Date.now() - pollStart < MAX_POLL_TIME) {
+        await new Promise(r => setTimeout(r, POLL_INTERVAL));
+        try {
+          const pollResp = await this.fetchWithTimeout(`/api/reviews/${recordId}`, {
+            headers: this.authHeaders(),
+          }, 10000);
+          const pollData = await pollResp.json();
+          if (pollData.success && pollData.data) {
+            const record = pollData.data as Record<string, unknown>;
+            const status = record.status as string;
+            if (status === 'completed') {
+              pollResult = record;
+              break;
+            } else if (status === 'failed') {
+              const result = record.result as Record<string, unknown>;
+              alert('审核失败：' + ((result?.issues as Array<Record<string, string>>)?.[0]?.description) || '请稍后重试');
+              this.isReviewing = false; this.files = []; this.textContent = ''; await this.loadHistoryFromDB(); this.render();
+              return;
+            }
+            // 更新进度
+            const result = record.result as Record<string, unknown> | undefined;
+            if (result?.progress) {
+              this.updateLoadingStatus(`AI 分析中... (${result.completedSegments || '?'}/${result.totalSegments || '?'} 段已完成)`);
+            } else {
+              this.updateLoadingStatus('AI 分析中（约30秒-5分钟）...');
+            }
+          }
+        } catch {
+          // 轮询失败不中断，继续重试
+          console.warn('[审核] 轮询请求失败，继续重试...');
+        }
+      }
+
+      if (pollResult) {
+        console.log('[审核] 审核完成，结果已获取');
+        this.currentReview = pollResult as any;
+        const r = (pollResult as any).result;
+        this.reviewMeta = r?._meta ? { knowledgeUsed: r._meta.knowledgeUsed, knowledgeChunks: r._meta.knowledgeChunks, knowledgeDatasets: r._meta.knowledgeDatasets, webSearchUsed: r._meta.webSearchUsed, webSearchResults: r._meta.webSearchResults } : null;
         this.resultTab = 'comparison';
         if (wasTruncated) { console.warn('[审核] 内容较长，已截取核心部分进行审核。'); }
       } else {
-        console.error('[审核] API 返回失败:', data);
-        alert(data.error || '审核失败');
+        alert('审核超时，请稍后在历史记录中查看结果。');
       }
     } catch (err) {
       console.error('[审核] 审核异常:', err);
       const errMsg = err instanceof Error ? err.message : '网络异常';
-      // 如果是网络错误，给出更具体的提示
       if (errMsg.includes('Failed to fetch') || errMsg.includes('NetworkError') || errMsg.includes('abort')) {
-        alert('审核失败：网络连接异常。请刷新页面后重试，如果持续失败请联系管理员。');
+        alert('审核提交失败：网络连接异常。请刷新页面后重试，如果持续失败请联系管理员。');
       } else {
         alert('审核失败：' + errMsg);
       }
