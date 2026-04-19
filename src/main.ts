@@ -168,41 +168,68 @@ export class ReviewAssistant {
     }
   }
 
-  private async uploadAndParseFiles(): Promise<{ name: string; content: string }[]> {
-    // 将文件读取为 base64，通过 JSON 发送（绕过反向代理对 multipart 的限制）
-    const fileData: { name: string; data: string; type: string }[] = [];
+  private async readFileContents(): Promise<{ name: string; content: string }[]> {
+    const results: { name: string; content: string }[] = [];
+
     for (const f of this.files) {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          // data:mime/type;base64,XXXXX → 只取 base64 部分
-          const base64Part = result.split(',')[1];
-          resolve(base64Part);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(f.file);
-      });
-      fileData.push({ name: f.name, data: base64, type: f.file.type });
+      try {
+        const ext = f.name.split('.').pop()?.toLowerCase() || '';
+
+        if (ext === 'pdf') {
+          // 前端用 pdf.js 解析 PDF
+          const arrayBuffer = await f.file.arrayBuffer();
+          const pdfjsLib = await import('pdfjs-dist');
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          const textParts: string[] = [];
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const textContent = await page.getTextContent();
+            const pageText = textContent.items.map((item: any) => item.str).join(' ');
+            textParts.push(pageText);
+          }
+          const text = textParts.join('\n\n');
+          results.push({ name: f.name, content: text || '[PDF解析结果为空]' });
+        } else if (['doc', 'docx'].includes(ext)) {
+          // 前端用 JSZip 解析 Word
+          const JSZip = (await import('jszip')).default;
+          const arrayBuffer = await f.file.arrayBuffer();
+          const zip = await JSZip.loadAsync(arrayBuffer);
+          const docXml = zip.file('word/document.xml');
+          if (docXml) {
+            const xml = await docXml.async('string');
+            const text = xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            results.push({ name: f.name, content: text || '[Word解析结果为空]' });
+          } else {
+            results.push({ name: f.name, content: '[Word文档结构异常]' });
+          }
+        } else if (f.file.type.startsWith('image/')) {
+          // 图片 base64（供多模态使用）
+          const base64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve((reader.result as string).split(',')[1]);
+            reader.readAsDataURL(f.file);
+          });
+          results.push({ name: f.name, content: `[图片: ${f.name}]\ndata:${f.file.type};base64,${base64}` });
+        } else {
+          // 纯文本
+          const text = await f.file.text();
+          results.push({ name: f.name, content: text });
+        }
+      } catch (err) {
+        console.error(`文件 ${f.name} 解析失败:`, err);
+        results.push({ name: f.name, content: `[文件解析失败，请直接粘贴文本内容]` });
+      }
     }
 
-    const response = await this.fetchWithTimeout('/api/parse-file', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ files: fileData }),
-    }, 60000);
-    if (!response.ok) throw new Error(`文件上传失败 (HTTP ${response.status})`);
-    const data = await response.json();
-    if (data.success && data.files) return data.files;
-    throw new Error(data.error || '文件解析失败');
+    return results;
   }
 
   async startReview() {
     if (this.files.length === 0) { alert('请先上传文件'); return; }
     this.isReviewing = true; this.render();
     try {
-      // 第一步：上传文件到后端解析
-      const fileContents = await this.uploadAndParseFiles();
+      // 前端解析文件 → 提取纯文本 → 发送到后端审核
+      const fileContents = await this.readFileContents();
       const combinedContent = fileContents.map(f => `=== ${f.name} ===\n${f.content}`).join('\n\n---\n\n');
       this.originalFileContent = combinedContent;
 

@@ -2,38 +2,12 @@ import { Router } from 'express';
 import { LLMClient, Config as LLMConfig, HeaderUtils, KnowledgeClient, DataSourceType, SearchClient } from 'coze-coding-dev-sdk';
 import type { KnowledgeDocument } from 'coze-coding-dev-sdk';
 import type { Request, Response, NextFunction } from 'express';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import { writeFile, unlink } from 'fs/promises';
-import path from 'path';
 import { getSupabaseClient } from '../src/storage/database/supabase-client';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyClient = any;
 
 const router = Router();
-const execFileAsync = promisify(execFile);
-
-// Python PDF 解析脚本路径
-const PDF_PARSER_SCRIPT = process.env.COZE_WORKSPACE_PATH
-  ? path.join(process.env.COZE_WORKSPACE_PATH, 'server', 'src', 'pdf-parser.py')
-  : path.join(__dirname, '..', 'src', 'pdf-parser.py');
-
-// 检查 Python + PyMuPDF 是否可用（结果缓存）
-let pythonChecked = false;
-let pythonOk = false;
-async function isPythonAvailable(): Promise<boolean> {
-  if (pythonChecked) return pythonOk;
-  try {
-    const { stdout } = await execFileAsync('python3', ['-c', 'import fitz; print("ok")'], { timeout: 5000 });
-    pythonOk = stdout.trim() === 'ok';
-  } catch {
-    pythonOk = false;
-  }
-  pythonChecked = true;
-  console.log('Python PyMuPDF available:', pythonOk);
-  return pythonOk;
-}
 
 // ==================== 审核类型 → 知识库数据集映射 ====================
 const DATASET_MAP: Record<string, string[]> = {
@@ -278,121 +252,6 @@ async function searchWeb(
     return { context: '', used: false, results: 0 };
   }
 }
-
-// ==================== 文件上传解析 ====================
-router.post('/api/parse-file', async (req: Request, res: Response) => {
-  req.setTimeout(60000);
-  res.setTimeout(60000);
-
-  console.log('[parse-file] Request received, content-type:', req.headers['content-type']);
-
-  try {
-    const { files } = req.body as { files?: { name: string; data: string; type: string }[] };
-
-    if (!files || files.length === 0) {
-      console.log('[parse-file] No files in request body');
-      res.status(400).json({ error: '未上传文件' });
-      return;
-    }
-
-    console.log('[parse-file] Files received:', files.map(f => ({ name: f.name, type: f.type, dataLength: f.data?.length })));
-
-    const results: { name: string; content: string; pages?: number }[] = [];
-    const tmpFiles: string[] = [];
-
-    try {
-      for (const file of files) {
-        const ext = file.name.split('.').pop()?.toLowerCase() || '';
-        // base64 → Buffer
-        const fileBuffer = Buffer.from(file.data, 'base64');
-        console.log(`[parse-file] Processing ${file.name}, ext=${ext}, bufferSize=${fileBuffer.length}`);
-
-        if (ext === 'pdf' || file.type === 'application/pdf') {
-          let parsedText = '';
-          let pageCount = 0;
-
-          try {
-            const usePython = await isPythonAvailable();
-            if (usePython) {
-              // 保存到临时文件给 Python 读取
-              const tmpPath = path.join('/tmp', `pdf_${Date.now()}_${Math.random().toString(36).slice(2)}.pdf`);
-              tmpFiles.push(tmpPath);
-              await writeFile(tmpPath, fileBuffer);
-              try {
-                const maxPages = fileBuffer.length > 5 * 1024 * 1024 ? 50 : 0;
-                const { stdout, stderr } = await execFileAsync('python3', [PDF_PARSER_SCRIPT, tmpPath, String(maxPages), '0'], {
-                  maxBuffer: 50 * 1024 * 1024,
-                  timeout: 30000,
-                });
-                if (stderr) console.error('PDF parser stderr:', stderr.substring(0, 300));
-                const parseResult = JSON.parse(stdout);
-                if (!parseResult.error) {
-                  parsedText = parseResult.text || '';
-                  pageCount = parseResult.pages || 0;
-                }
-              } catch (parseErr) {
-                console.error('Python PDF parse failed:', parseErr instanceof Error ? parseErr.message : String(parseErr));
-              }
-            }
-
-            // 降级：pdf-parse
-            if (!parsedText) {
-              console.log('[parse-file] Using pdf-parse fallback');
-              const pdfParse = (await import('pdf-parse')).default;
-              const data = await pdfParse(fileBuffer);
-              parsedText = data.text || '';
-              pageCount = data.numpages || 0;
-            }
-          } catch (err) {
-            console.error('PDF parse error:', err instanceof Error ? err.message : String(err));
-          }
-
-          if (parsedText) {
-            results.push({ name: file.name, content: parsedText, pages: pageCount });
-          } else {
-            results.push({ name: file.name, content: '[PDF解析结果为空，可能为扫描件，请尝试上传文字版PDF或直接粘贴文本内容]' });
-          }
-        } else if (['doc', 'docx'].includes(ext) || file.type?.includes('word') || file.type?.includes('document')) {
-          try {
-            const JSZip = (await import('jszip')).default;
-            const zip = await JSZip.loadAsync(fileBuffer);
-            const docXml = zip.file('word/document.xml');
-            if (docXml) {
-              const xmlContent = await docXml.async('string');
-              const text = xmlContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-              results.push({ name: file.name, content: text || '[Word文档解析结果为空]' });
-            } else {
-              results.push({ name: file.name, content: '[Word文档结构异常，未找到正文内容]' });
-            }
-          } catch {
-            results.push({ name: file.name, content: '[Word文档解析失败，请尝试导出为PDF后上传或直接粘贴文本]' });
-          }
-        } else if (['xls', 'xlsx'].includes(ext) || file.type?.includes('sheet') || file.type?.includes('excel')) {
-          results.push({ name: file.name, content: '[Excel文件暂不支持直接解析，请导出为PDF后上传或直接粘贴关键数据]' });
-        } else if (file.type?.startsWith('image/')) {
-          // 图片直接用 base64
-          results.push({ name: file.name, content: `[图片: ${file.name}]\ndata:${file.type};base64,${file.data}` });
-        } else {
-          // 文本文件：base64 → utf-8
-          const text = fileBuffer.toString('utf-8');
-          results.push({ name: file.name, content: text });
-        }
-      }
-    } finally {
-      for (const tmp of tmpFiles) {
-        try { await unlink(tmp); } catch { /* ignore */ }
-      }
-    }
-
-    console.log('[parse-file] Done, results count:', results.length);
-    res.json({ success: true, files: results });
-  } catch (error) {
-    console.error('File parse error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ error: '文件解析失败' });
-    }
-  }
-});
 
 // ==================== 健康检查 ====================
 router.get('/api/health', async (_req: Request, res: Response) => {
