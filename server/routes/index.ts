@@ -238,7 +238,6 @@ function splitByChapter(body: string, maxChars: number): ContentChunk[] {
 
   const lines = body.split('\n');
   const sections: Array<{ title: string; startLine: number }> = [];
-  let firstSectionLine = 0;
 
   // 找到所有章节分割点
   for (let i = 0; i < lines.length; i++) {
@@ -247,7 +246,6 @@ function splitByChapter(body: string, maxChars: number): ContentChunk[] {
       if (sections.length === 0 && i > 0) {
         // 第一个章节之前的内容作为前言
         sections.push({ title: '前言', startLine: 0 });
-        firstSectionLine = i;
       }
       const title = lines[i].trim().substring(0, 30);
       sections.push({ title, startLine: i });
@@ -332,7 +330,11 @@ function mergeSegmentResults(
   skippedContent: string,
 ): Record<string, unknown> {
   if (segments.length === 1) {
-    const r = segments[0];
+    const r = { ...segments[0] };
+    // 清理内部标记字段
+    delete r._segment;
+    delete r._segmentTitle;
+    delete r._failed;
     r._totalSegments = 1;
     return r;
   }

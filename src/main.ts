@@ -201,7 +201,7 @@ export class ReviewAssistant {
   /** 更新加载遮罩上的提示文本，让用户看到实时进度 */
   private updateLoadingStatus(msg: string) {
     const el = document.getElementById('loadingStatusText');
-    if (el) el.textContent = msg;
+    if (el) el.innerText = msg;
   }
 
   private async readFileContents(): Promise<{ name: string; content: string }[]> {

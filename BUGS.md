@@ -27,7 +27,7 @@
 | **发现时间** | 生产环境部署后 |
 | **现象** | 上传任何文件（即使 10KB）都返回 HTTP 413 (Request Entity Too Large)，进度条无限转圈 |
 | **根因** | 生产环境有反向代理（nginx），默认对 POST 请求 body size 有限制。无论是 multipart/form-data 还是 base64+JSON，代理层都会拒绝 |
-| **最终修复** | **完全弃用后端文件上传**，改为前端浏览器内解析文件：PDF 用 pdf.js、Word 用 JSZip、文本用 File.text()，提取纯文本后通过 JSON POST 发送到后端审核接口。文本内容限制 50000 字符（约 150KB），避免触发代理限制 |
+| **最终修复** | **完全弃用后端文件上传**，改为前端浏览器内解析文件：PDF 用 pdf.js、Word 用 JSZip、文本用 File.text()，提取纯文本后通过 JSON POST 发送到后端审核接口。文本内容前端限制 100000 字符，后端分段审核保证全文覆盖 |
 | **教训** | **在受限的 PaaS 环境中，反向代理可能限制所有大 body POST 请求，不仅是 multipart。最安全的方案是在前端解析文件，只发送纯文本** |
 
 **尝试过的方案及失败原因：**
@@ -95,7 +95,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 |------|------|
 | **严重级别** | 🟠 严重 |
 | **现象** | 大型工程 PDF 前面有审批表和目录，简单截取前 N 字符只拿到目录内容，正文被丢弃 |
-| **修复** | 后端智能截取 head(80%) + tail(20%)；前端限制 50000 字符 |
+| **修复** | 后端分段审核：跳过报审单/目录 → 按章节拆分 → 逐段 LLM 审核 → 合并结果 |
 | **教训** | **工程类 PDF 普遍有审批表+目录**，解析时必须智能跳过 |
 
 ---
@@ -145,7 +145,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
     ├─ 图片 → base64 编码
     └─ 文本 → File.text() 直接读取
     ↓
-提取的纯文本（限制 50000 字符）
+提取的纯文本（前端限制 100000 字符）
     ↓
 JSON POST → /api/review（仅发送纯文本）
     ↓
@@ -176,7 +176,7 @@ pnpm tsup server/server.ts --external vite --external jszip
 - [x] `pnpm-lock.yaml` 与 `package.json` 一致
 - [x] 构建脚本容错：非关键步骤失败不中断
 - [x] pdf.js worker 复制到 public/（构建脚本自动执行）
-- [x] 前端内容截断保护（50000 字符限制）
+- [x] 前端内容截断保护（100000 字符限制）
 - [x] 所有 npm 包版本锁定
 
 ---

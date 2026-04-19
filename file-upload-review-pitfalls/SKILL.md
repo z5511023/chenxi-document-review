@@ -56,7 +56,7 @@ const text = await file.text();
 const text = await readFileContents(file);  // pdf.js / JSZip / File.text()
 
 // 2. 截断保护（避免 body 过大）
-const MAX_CHARS = 50000;
+const MAX_CHARS = 100000;
 const content = text.length > MAX_CHARS
   ? text.substring(0, MAX_CHARS * 0.8) + '\n[...省略...]\n' + text.substring(text.length - MAX_CHARS * 0.2)
   : text;
@@ -119,7 +119,7 @@ const pdf = await Promise.race([
 
 ### 规则 4：工程类 PDF 必须智能跳过审批表和目录
 
-大型工程 PDF 前面通常有审批表和目录（10-20页），简单截取前 N 字符只拿到目录。必须自动检测并跳过，或使用 head(80%) + tail(20%) 截取策略。
+大型工程 PDF 前面通常有报审单和目录（10-20页），简单截取会遗漏正文。必须智能跳过报审单/目录，保留全部正文，再按章节分段送审，保证全文覆盖。
 
 ### 规则 5：不要把大型二进制文件提交到 git
 
@@ -180,14 +180,14 @@ const pdf = await Promise.race([
 
 ### 规则 10：前端内容截断保护
 
-生产环境代理对 POST body 大小有限制，前端应在发送前截断过长的文本内容。推荐限制 50000 字符（约 150KB UTF-8），后端会进一步截取核心部分发给 LLM。
+生产环境代理对 POST body 大小有限制，前端限制 100000 字符。后端采用分段审核策略：智能跳过报审单/目录 → 按章节拆分 → 逐段 LLM 审核 → 合并结果，保证全文无遗漏。
 
 ## 操作步骤
 
 1. 检查项目是否有文件上传需求，如有则按上述规则审查
 2. 优先考虑前端解析方案（pdf.js + JSZip），避免后端文件上传
 3. 确认 pdf.js worker 配置正确（`/pdf.worker.min.mjs` 绝对路径）
-4. 确认前端内容截断保护（50000 字符限制）
+4. 确认前端内容截断保护（100000 字符限制）
 5. 确认 .gitignore 排除大文件和 worker 文件
 6. 确认构建脚本容错 + 自动复制 pdf.js worker
 7. 检查是否存在 readAsText 读取非文本文件的代码
