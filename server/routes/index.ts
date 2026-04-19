@@ -37,13 +37,38 @@ async function isPythonAvailable(): Promise<boolean> {
   return pythonAvailable;
 }
 
-// Node.js 降级 PDF 解析
+// Node.js 降级 PDF 解析（运行时动态加载，无需打包时依赖）
 async function parsePdfWithNode(buffer: Buffer): Promise<string> {
   try {
+    // 尝试动态 import pdf-parse
     const pdfParse = (await import('pdf-parse')).default;
     const data = await pdfParse(buffer);
     return data.text || '';
   } catch {
+    // pdf-parse 不可用时，尝试从 buffer 中提取可见文本
+    try {
+      const text = buffer.toString('utf-8', 0, Math.min(buffer.length, 500000));
+      // 提取 PDF stream 中的文本片段
+      const textParts: string[] = [];
+      const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+      let match;
+      while ((match = streamRegex.exec(text)) !== null) {
+        const content = match[1];
+        // 提取括号内的文本 (PDF text objects)
+        const textRegex = /\(([^)]*)\)/g;
+        let textMatch;
+        while ((textMatch = textRegex.exec(content)) !== null) {
+          if (textMatch[1].length > 1 && /[\u4e00-\u9fff]/.test(textMatch[1])) {
+            textParts.push(textMatch[1]);
+          }
+        }
+      }
+      if (textParts.length > 0) {
+        return textParts.join('\n');
+      }
+    } catch {
+      // ignore
+    }
     return '';
   }
 }

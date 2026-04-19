@@ -6,7 +6,7 @@ COZE_WORKSPACE_PATH="${COZE_WORKSPACE_PATH:-$(pwd)}"
 cd "${COZE_WORKSPACE_PATH}"
 
 echo "Installing dependencies..."
-pnpm install --prefer-frozen-lockfile --prefer-offline --loglevel debug --reporter=append-only
+pnpm install --loglevel warn
 
 echo "Installing Python PyMuPDF (if available)..."
 pip3 install PyMuPDF 2>/dev/null || echo "Python/PyMuPDF not available, will use Node.js fallback for PDF parsing"
