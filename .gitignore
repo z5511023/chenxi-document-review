@@ -53,6 +53,11 @@ node-compile-cache/
 *.sln
 *.sw?
 
+# Upload assets (large binary files)
+assets/*.pdf
+assets/*.png
+assets/*.jpg
+
 # OS files
 .DS_Store
 .DS_Store?
@@ -66,3 +71,5 @@ Thumbs.db
 .vite/
 
 .coze-logs
+assets/*.pdf
+assets/*.png

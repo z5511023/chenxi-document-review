@@ -5,7 +5,7 @@ import type { Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { writeFile, unlink, mkdir } from 'fs/promises';
+import { writeFile, unlink } from 'fs/promises';
 import path from 'path';
 import { getSupabaseClient } from '../src/storage/database/supabase-client';
 
@@ -18,10 +18,35 @@ const execFileAsync = promisify(execFile);
 // multer 内存存储，用于文件上传解析
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
-// Python PDF 解析脚本路径（使用源码目录的绝对路径，确保开发/生产环境都能找到）
+// Python PDF 解析脚本路径
 const PDF_PARSER_SCRIPT = process.env.COZE_WORKSPACE_PATH
   ? path.join(process.env.COZE_WORKSPACE_PATH, 'server', 'src', 'pdf-parser.py')
   : path.join(__dirname, '..', 'src', 'pdf-parser.py');
+
+// 检查 Python + PyMuPDF 是否可用
+let pythonAvailable: boolean | null = null;
+async function isPythonAvailable(): Promise<boolean> {
+  if (pythonAvailable !== null) return pythonAvailable;
+  try {
+    const { stdout } = await execFileAsync('python3', ['-c', 'import fitz; print("ok")'], { timeout: 5000 });
+    pythonAvailable = stdout.trim() === 'ok';
+  } catch {
+    pythonAvailable = false;
+  }
+  console.log('Python PyMuPDF available:', pythonAvailable);
+  return pythonAvailable;
+}
+
+// Node.js 降级 PDF 解析
+async function parsePdfWithNode(buffer: Buffer): Promise<string> {
+  try {
+    const pdfParse = (await import('pdf-parse')).default;
+    const data = await pdfParse(buffer);
+    return data.text || '';
+  } catch {
+    return '';
+  }
+}
 
 // ==================== 审核类型 → 知识库数据集映射 ====================
 const DATASET_MAP: Record<string, string[]> = {
@@ -284,29 +309,43 @@ router.post('/api/parse-file', upload.array('files', 10), async (req: Request, r
         const ext = file.originalname.split('.').pop()?.toLowerCase() || '';
 
         if (ext === 'pdf' || file.mimetype === 'application/pdf') {
-          // PDF → 保存临时文件 → Python PyMuPDF 解析
-          const tmpPath = path.join('/tmp', `pdf_${Date.now()}_${Math.random().toString(36).slice(2)}.pdf`);
-          tmpFiles.push(tmpPath);
-          await writeFile(tmpPath, file.buffer);
+          // PDF 解析：优先 Python PyMuPDF，降级 Node.js pdf-parse
+          let parsedText = '';
+          let pageCount = 0;
 
-          try {
-            // 大文件自动跳过审批表和目录（Python脚本自动检测）
-            const maxPages = file.size > 5 * 1024 * 1024 ? 50 : 0;
-            console.log('PDF parse: script=', PDF_PARSER_SCRIPT, 'tmpPath=', tmpPath, 'maxPages=', maxPages);
-            const { stdout, stderr } = await execFileAsync('python3', [PDF_PARSER_SCRIPT, tmpPath, String(maxPages), '0'], {
-              maxBuffer: 50 * 1024 * 1024,
-              timeout: 60000,
-            });
-            if (stderr) console.error('PDF parser stderr:', stderr.substring(0, 500));
-            const parseResult = JSON.parse(stdout);
-            if (parseResult.error) {
-              results.push({ name: file.originalname, content: `[PDF解析失败: ${parseResult.error}，请尝试上传文字版PDF或直接粘贴文本]` });
-            } else {
-              results.push({ name: file.originalname, content: parseResult.text || '[PDF解析结果为空，可能为扫描件]', pages: parseResult.pages });
+          const usePython = await isPythonAvailable();
+          if (usePython) {
+            // Python PyMuPDF 解析（支持智能跳过目录）
+            const tmpPath = path.join('/tmp', `pdf_${Date.now()}_${Math.random().toString(36).slice(2)}.pdf`);
+            tmpFiles.push(tmpPath);
+            await writeFile(tmpPath, file.buffer);
+            try {
+              const maxPages = file.size > 5 * 1024 * 1024 ? 50 : 0;
+              const { stdout, stderr } = await execFileAsync('python3', [PDF_PARSER_SCRIPT, tmpPath, String(maxPages), '0'], {
+                maxBuffer: 50 * 1024 * 1024,
+                timeout: 60000,
+              });
+              if (stderr) console.error('PDF parser stderr:', stderr.substring(0, 500));
+              const parseResult = JSON.parse(stdout);
+              if (!parseResult.error) {
+                parsedText = parseResult.text || '';
+                pageCount = parseResult.pages || 0;
+              }
+            } catch (parseErr) {
+              console.error('Python PDF parse failed:', parseErr instanceof Error ? parseErr.message : String(parseErr));
             }
-          } catch (parseErr) {
-            console.error('PDF parse exec error:', parseErr instanceof Error ? parseErr.message : String(parseErr));
-            results.push({ name: file.originalname, content: '[PDF解析失败，请尝试上传文字版PDF或直接粘贴文本内容]' });
+          }
+
+          // 降级：使用 Node.js pdf-parse
+          if (!parsedText) {
+            console.log('Falling back to Node.js pdf-parse');
+            parsedText = await parsePdfWithNode(file.buffer);
+          }
+
+          if (parsedText) {
+            results.push({ name: file.originalname, content: parsedText, pages: pageCount });
+          } else {
+            results.push({ name: file.originalname, content: '[PDF解析结果为空，可能为扫描件，请尝试上传文字版PDF或直接粘贴文本内容]' });
           }
         } else if (['doc', 'docx'].includes(ext) || file.mimetype.includes('word') || file.mimetype.includes('document')) {
           // Word 文件：读取 zip 中的 word/document.xml
