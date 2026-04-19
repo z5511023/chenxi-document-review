@@ -7,6 +7,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { writeFile, unlink } from 'fs/promises';
 import path from 'path';
+import pdfParse from 'pdf-parse';
 import { getSupabaseClient } from '../src/storage/database/supabase-client';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -23,54 +24,20 @@ const PDF_PARSER_SCRIPT = process.env.COZE_WORKSPACE_PATH
   ? path.join(process.env.COZE_WORKSPACE_PATH, 'server', 'src', 'pdf-parser.py')
   : path.join(__dirname, '..', 'src', 'pdf-parser.py');
 
-// 检查 Python + PyMuPDF 是否可用
-let pythonAvailable: boolean | null = null;
+// 检查 Python + PyMuPDF 是否可用（结果缓存）
+let pythonChecked = false;
+let pythonOk = false;
 async function isPythonAvailable(): Promise<boolean> {
-  if (pythonAvailable !== null) return pythonAvailable;
+  if (pythonChecked) return pythonOk;
   try {
     const { stdout } = await execFileAsync('python3', ['-c', 'import fitz; print("ok")'], { timeout: 5000 });
-    pythonAvailable = stdout.trim() === 'ok';
+    pythonOk = stdout.trim() === 'ok';
   } catch {
-    pythonAvailable = false;
+    pythonOk = false;
   }
-  console.log('Python PyMuPDF available:', pythonAvailable);
-  return pythonAvailable;
-}
-
-// Node.js 降级 PDF 解析（运行时动态加载，无需打包时依赖）
-async function parsePdfWithNode(buffer: Buffer): Promise<string> {
-  try {
-    // 尝试动态 import pdf-parse
-    const pdfParse = (await import('pdf-parse')).default;
-    const data = await pdfParse(buffer);
-    return data.text || '';
-  } catch {
-    // pdf-parse 不可用时，尝试从 buffer 中提取可见文本
-    try {
-      const text = buffer.toString('utf-8', 0, Math.min(buffer.length, 500000));
-      // 提取 PDF stream 中的文本片段
-      const textParts: string[] = [];
-      const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-      let match;
-      while ((match = streamRegex.exec(text)) !== null) {
-        const content = match[1];
-        // 提取括号内的文本 (PDF text objects)
-        const textRegex = /\(([^)]*)\)/g;
-        let textMatch;
-        while ((textMatch = textRegex.exec(content)) !== null) {
-          if (textMatch[1].length > 1 && /[\u4e00-\u9fff]/.test(textMatch[1])) {
-            textParts.push(textMatch[1]);
-          }
-        }
-      }
-      if (textParts.length > 0) {
-        return textParts.join('\n');
-      }
-    } catch {
-      // ignore
-    }
-    return '';
-  }
+  pythonChecked = true;
+  console.log('Python PyMuPDF available:', pythonOk);
+  return pythonOk;
 }
 
 // ==================== 审核类型 → 知识库数据集映射 ====================
@@ -334,37 +301,43 @@ router.post('/api/parse-file', upload.array('files', 10), async (req: Request, r
         const ext = file.originalname.split('.').pop()?.toLowerCase() || '';
 
         if (ext === 'pdf' || file.mimetype === 'application/pdf') {
-          // PDF 解析：优先 Python PyMuPDF，降级 Node.js pdf-parse
+          // PDF 解析：优先 Python PyMuPDF，降级 pdf-parse
           let parsedText = '';
           let pageCount = 0;
 
-          const usePython = await isPythonAvailable();
-          if (usePython) {
-            // Python PyMuPDF 解析（支持智能跳过目录）
-            const tmpPath = path.join('/tmp', `pdf_${Date.now()}_${Math.random().toString(36).slice(2)}.pdf`);
-            tmpFiles.push(tmpPath);
-            await writeFile(tmpPath, file.buffer);
-            try {
-              const maxPages = file.size > 5 * 1024 * 1024 ? 50 : 0;
-              const { stdout, stderr } = await execFileAsync('python3', [PDF_PARSER_SCRIPT, tmpPath, String(maxPages), '0'], {
-                maxBuffer: 50 * 1024 * 1024,
-                timeout: 60000,
-              });
-              if (stderr) console.error('PDF parser stderr:', stderr.substring(0, 500));
-              const parseResult = JSON.parse(stdout);
-              if (!parseResult.error) {
-                parsedText = parseResult.text || '';
-                pageCount = parseResult.pages || 0;
+          try {
+            const usePython = await isPythonAvailable();
+            if (usePython) {
+              // Python PyMuPDF 解析（支持智能跳过目录）
+              const tmpPath = path.join('/tmp', `pdf_${Date.now()}_${Math.random().toString(36).slice(2)}.pdf`);
+              tmpFiles.push(tmpPath);
+              await writeFile(tmpPath, file.buffer);
+              try {
+                const maxPages = file.size > 5 * 1024 * 1024 ? 50 : 0;
+                const { stdout, stderr } = await execFileAsync('python3', [PDF_PARSER_SCRIPT, tmpPath, String(maxPages), '0'], {
+                  maxBuffer: 50 * 1024 * 1024,
+                  timeout: 30000,
+                });
+                if (stderr) console.error('PDF parser stderr:', stderr.substring(0, 300));
+                const parseResult = JSON.parse(stdout);
+                if (!parseResult.error) {
+                  parsedText = parseResult.text || '';
+                  pageCount = parseResult.pages || 0;
+                }
+              } catch (parseErr) {
+                console.error('Python PDF parse failed:', parseErr instanceof Error ? parseErr.message : String(parseErr));
               }
-            } catch (parseErr) {
-              console.error('Python PDF parse failed:', parseErr instanceof Error ? parseErr.message : String(parseErr));
             }
-          }
 
-          // 降级：使用 Node.js pdf-parse
-          if (!parsedText) {
-            console.log('Falling back to Node.js pdf-parse');
-            parsedText = await parsePdfWithNode(file.buffer);
+            // 降级：使用 Node.js pdf-parse
+            if (!parsedText) {
+              console.log('Using Node.js pdf-parse fallback');
+              const data = await pdfParse(file.buffer);
+              parsedText = data.text || '';
+              pageCount = data.numpages || 0;
+            }
+          } catch (err) {
+            console.error('PDF parse error:', err instanceof Error ? err.message : String(err));
           }
 
           if (parsedText) {

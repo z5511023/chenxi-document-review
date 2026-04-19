@@ -12,11 +12,12 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "2.95.3",
-    "@types/multer": "^2.1.0",
+    "@types/multer": "^1.4.12",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "jszip": "^3.10.1",
-    "multer": "^2.1.1"
+    "multer": "^1.4.5-lts.2",
+    "pdf-parse": "^1.1.1"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
