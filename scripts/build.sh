@@ -6,7 +6,7 @@ COZE_WORKSPACE_PATH="${COZE_WORKSPACE_PATH:-$(pwd)}"
 cd "${COZE_WORKSPACE_PATH}"
 
 echo "Installing dependencies..."
-pnpm install --loglevel warn
+npm_config_registry=https://registry.npmmirror.com pnpm install --prefer-offline --loglevel warn
 
 echo "Copying pdf.js worker to public..."
 mkdir -p public
@@ -16,7 +16,7 @@ echo "Building frontend with Vite..."
 pnpm vite build
 
 echo "Bundling server with tsup..."
-pnpm tsup server/server.ts --format cjs --platform node --target node20 --outDir dist-server --no-splitting --no-minify --external vite --external jszip
+pnpm tsup server/server.ts --format cjs --platform node --target node20 --outDir dist-server --no-splitting --no-minify --external vite --external jszip --external coze-coding-dev-sdk --external @supabase/supabase-js
 
 echo "Copying _load_env.py to dist-server..."
 cp -f server/src/storage/database/_load_env.py dist-server/_load_env.py
