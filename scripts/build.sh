@@ -18,4 +18,7 @@ pnpm vite build
 echo "Bundling server with tsup..."
 pnpm tsup server/server.ts --format cjs --platform node --target node20 --outDir dist-server --no-splitting --no-minify --external vite --external jszip
 
+echo "Copying _load_env.py to dist-server..."
+cp -f server/src/storage/database/_load_env.py dist-server/_load_env.py
+
 echo "Build completed successfully!"

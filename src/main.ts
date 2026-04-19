@@ -164,7 +164,7 @@ export class ReviewAssistant {
     this.render();
   }
 
-  /** 上传文件到后端解析（PDF/Word/图片等） */
+  /** 带超时的 fetch */
   private async fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 120000): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -176,71 +176,85 @@ export class ReviewAssistant {
     }
   }
 
+  /** 更新加载遮罩上的提示文本，让用户看到实时进度 */
+  private updateLoadingStatus(msg: string) {
+    const el = document.getElementById('loadingStatusText');
+    if (el) el.textContent = msg;
+  }
+
   private async readFileContents(): Promise<{ name: string; content: string }[]> {
     const results: { name: string; content: string }[] = [];
 
-    for (const f of this.files) {
+    for (let idx = 0; idx < this.files.length; idx++) {
+      const f = this.files[idx];
+      this.updateLoadingStatus(`正在解析文件 ${idx + 1}/${this.files.length}：${f.name}`);
       try {
         const ext = f.name.split('.').pop()?.toLowerCase() || '';
 
         if (ext === 'pdf') {
           // 前端用 pdf.js 解析 PDF
+          console.log(`[文件解析] 开始解析 PDF: ${f.name} (${(f.size / 1024).toFixed(1)} KB)`);
           const arrayBuffer = await f.file.arrayBuffer();
           const pdfjsLib = await import('pdfjs-dist');
+          console.log('[文件解析] pdfjs-dist 动态导入成功');
 
-          // ✅ Worker URL 解析：运行时动态检测
-          // 1. 优先检查 /pdf.worker.min.mjs（构建脚本复制到 public/ 的版本）
-          // 2. Vite 构建产物中 worker 会被打包为 /assets/pdf.worker.min-xxx.mjs
-          // 3. 如果都失败 → 降级为无 worker 模式（主线程解析）
+          // ✅ Worker 配置策略：
+          // 直接设置 workerSrc 为 /pdf.worker.min.mjs（构建脚本已复制到 public/）
+          // 不做 fetch HEAD 检测（跨域环境可能失败）
+          // 如果 worker 加载失败，catch 中降级为主线程模式
           if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-            // 尝试 public/ 路径（dev.sh/build.sh 复制的版本）
-            const workerPaths = [
-              '/pdf.worker.min.mjs',  // 构建脚本从 node_modules 复制到 public/
-            ];
-            for (const wPath of workerPaths) {
-              try {
-                const resp = await fetch(wPath, { method: 'HEAD' });
-                if (resp.ok) {
-                  pdfjsLib.GlobalWorkerOptions.workerSrc = wPath;
-                  break;
-                }
-              } catch { /* 跳过不可用的路径 */ }
-            }
+            pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+            console.log('[文件解析] 设置 workerSrc = /pdf.worker.min.mjs');
           }
+
           let pdf: any;
           try {
-            // 先尝试使用 worker 模式（性能更好）
+            // Worker 模式（性能好，异步解析不阻塞 UI）
+            console.log('[文件解析] 开始 Worker 模式解析...');
             const pdfPromise = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
             pdf = await Promise.race([
               pdfPromise,
               new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF 解析超时(30s)')), 30000))
             ]);
+            console.log(`[文件解析] Worker 模式解析成功，共 ${pdf.numPages} 页`);
           } catch (workerErr) {
-            // Worker 加载失败 → 降级为无 worker 模式（主线程解析，稍慢但 100% 可靠）
-            console.warn('PDF worker 模式失败，降级为主线程解析:', workerErr);
+            // Worker 加载失败 → 降级为主线程模式（慢但 100% 可靠）
+            console.warn('[文件解析] Worker 模式失败，降级为主线程解析:', workerErr);
             pdfjsLib.GlobalWorkerOptions.workerSrc = '';
             try {
-              const pdfPromise = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer), useWorkerFetch: false, isEvalSupported: false, useSystemFonts: true }).promise;
+              const pdfPromise = pdfjsLib.getDocument({
+                data: new Uint8Array(arrayBuffer),
+                useWorkerFetch: false,
+                isEvalSupported: false,
+                useSystemFonts: true,
+              }).promise;
               pdf = await Promise.race([
                 pdfPromise,
-                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF 主线程解析也超时，请使用文本粘贴功能')), 60000))
+                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF 主线程解析超时')), 60000))
               ]);
+              console.log(`[文件解析] 主线程模式解析成功，共 ${pdf.numPages} 页`);
             } catch (fallbackErr) {
-              throw new Error('PDF 解析失败：' + (fallbackErr instanceof Error ? fallbackErr.message : '未知错误') + '。请使用下方文本粘贴功能直接粘贴文件内容。');
+              const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : '未知错误';
+              console.error('[文件解析] 主线程模式也失败:', fallbackErr);
+              throw new Error(`PDF 解析失败：${fbMsg}。建议：用 PDF 阅读器打开文件，复制文本内容粘贴到下方文本框中。`);
             }
           }
 
+          // 逐页提取文本
           const textParts: string[] = [];
           for (let i = 1; i <= pdf.numPages; i++) {
+            this.updateLoadingStatus(`正在提取第 ${i}/${pdf.numPages} 页文本...`);
             const page = await pdf.getPage(i);
             const textContent = await page.getTextContent();
             const pageText = textContent.items.map((item: any) => item.str).join(' ');
             textParts.push(pageText);
           }
           const text = textParts.join('\n\n');
-          results.push({ name: f.name, content: text || '[PDF解析结果为空，请使用文本粘贴功能]' });
+          console.log(`[文件解析] PDF 文本提取完成，总长度 ${text.length} 字符`);
+          results.push({ name: f.name, content: text || '[PDF解析结果为空，请将文件内容复制粘贴到下方文本框]' });
         } else if (['doc', 'docx'].includes(ext)) {
           // 前端用 JSZip 解析 Word
+          console.log(`[文件解析] 开始解析 Word: ${f.name}`);
           const JSZip = (await import('jszip')).default;
           const arrayBuffer = await f.file.arrayBuffer();
           const zip = await JSZip.loadAsync(arrayBuffer);
@@ -248,26 +262,31 @@ export class ReviewAssistant {
           if (docXml) {
             const xml = await docXml.async('string');
             const text = xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-            results.push({ name: f.name, content: text || '[Word解析结果为空，请使用文本粘贴功能]' });
+            console.log(`[文件解析] Word 文本提取完成，总长度 ${text.length} 字符`);
+            results.push({ name: f.name, content: text || '[Word解析结果为空，请将文件内容复制粘贴到下方文本框]' });
           } else {
-            results.push({ name: f.name, content: '[Word文档结构异常，请使用文本粘贴功能]' });
+            results.push({ name: f.name, content: '[Word文档结构异常，请将文件内容复制粘贴到下方文本框]' });
           }
         } else if (f.file.type.startsWith('image/')) {
-          // 图片 base64（供多模态使用）
+          // 图片：提取 base64，供 LLM 多模态识别
+          console.log(`[文件解析] 开始处理图片: ${f.name}`);
           const base64 = await new Promise<string>((resolve) => {
             const reader = new FileReader();
             reader.onload = () => resolve((reader.result as string).split(',')[1]);
             reader.readAsDataURL(f.file);
           });
-          results.push({ name: f.name, content: `[图片: ${f.name}]\ndata:${f.file.type};base64,${base64}` });
+          const imageContent = `[图片: ${f.name}]\ndata:${f.file.type};base64,${base64}`;
+          console.log(`[文件解析] 图片 base64 提取完成，长度 ${imageContent.length} 字符`);
+          results.push({ name: f.name, content: imageContent });
         } else {
           // 纯文本
+          console.log(`[文件解析] 读取纯文本: ${f.name}`);
           const text = await f.file.text();
           results.push({ name: f.name, content: text });
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : '未知错误';
-        console.error(`文件 ${f.name} 解析失败:`, err);
+        console.error(`[文件解析] 文件 ${f.name} 解析失败:`, err);
         results.push({ name: f.name, content: `[文件解析失败: ${errMsg}]` });
       }
     }
@@ -281,7 +300,10 @@ export class ReviewAssistant {
     const hasFiles = this.files.length > 0;
     if (!hasTextContent && !hasFiles) { alert('请先上传文件或粘贴文本内容'); return; }
 
+    console.log(`[审核] 开始审核，模式: ${hasTextContent ? '文本粘贴' : '文件上传'}, 文件数: ${this.files.length}, 文本长度: ${this.textContent.trim().length}`);
     this.isReviewing = true; this.render();
+    this.updateLoadingStatus('正在准备审核...');
+
     try {
       let combinedContent = '';
 
@@ -289,11 +311,14 @@ export class ReviewAssistant {
         // 文本粘贴模式：直接使用用户粘贴的文本，无需任何文件解析
         combinedContent = this.textContent.trim();
         this.originalFileContent = combinedContent;
+        console.log(`[审核] 文本粘贴模式，内容长度 ${combinedContent.length} 字符`);
       } else {
         // 文件上传模式：前端解析文件提取文本
+        console.log('[审核] 文件上传模式，开始解析文件...');
         const fileContents = await this.readFileContents();
         combinedContent = fileContents.map(f => `=== ${f.name} ===\n${f.content}`).join('\n\n---\n\n');
         this.originalFileContent = combinedContent;
+        console.log(`[审核] 文件解析完成，合并后内容长度 ${combinedContent.length} 字符`);
       }
 
       // 前端截断保护：避免 POST body 过大被生产环境反向代理拒绝 (HTTP 413)
@@ -306,25 +331,39 @@ export class ReviewAssistant {
           + '\n\n[... 中间内容因长度限制已省略 ...]\n\n'
           + combinedContent.substring(combinedContent.length - tailLen);
         wasTruncated = true;
+        console.log(`[审核] 内容已截断至 ${MAX_FRONTEND_CHARS} 字符`);
       }
 
       const fileName = hasTextContent ? '粘贴文本内容' : this.files.map(f => f.name).join(', ');
 
       // 提交审核
+      this.updateLoadingStatus('正在提交审核，AI 分析中（约30秒-2分钟）...');
+      console.log(`[审核] 提交到 /api/review，类型=${this.reviewType}，模式=${this.reviewMode}`);
       const response = await this.fetchWithTimeout('/api/review', {
         method: 'POST', headers: this.authHeaders(),
         body: JSON.stringify({ fileName, fileContent: combinedContent, reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role }),
       }, 120000);
+      console.log(`[审核] API 响应状态: ${response.status}`);
       const data = await response.json();
       if (data.success && data.result) {
+        console.log('[审核] 审核成功，结果已返回');
         this.currentReview = { id: data.id, file_name: data.fileName, review_type: data.reviewType, review_mode: data.reviewMode, user_role: this.role, status: 'completed', result: data.result, created_at: new Date().toISOString() };
         this.reviewMeta = { knowledgeUsed: data.knowledgeUsed, knowledgeChunks: data.knowledgeChunks, knowledgeDatasets: data.knowledgeDatasets, webSearchUsed: data.webSearchUsed, webSearchResults: data.webSearchResults };
         this.resultTab = 'comparison';
-        if (wasTruncated) { console.warn('内容较长，已截取核心部分进行审核。如需完整审核，请拆分为多个文件。'); }
-      } else { alert(data.error || '审核失败'); }
+        if (wasTruncated) { console.warn('[审核] 内容较长，已截取核心部分进行审核。'); }
+      } else {
+        console.error('[审核] API 返回失败:', data);
+        alert(data.error || '审核失败');
+      }
     } catch (err) {
-      console.error('审核失败:', err);
-      alert('审核失败：' + (err instanceof Error ? err.message : '网络异常'));
+      console.error('[审核] 审核异常:', err);
+      const errMsg = err instanceof Error ? err.message : '网络异常';
+      // 如果是网络错误，给出更具体的提示
+      if (errMsg.includes('Failed to fetch') || errMsg.includes('NetworkError') || errMsg.includes('abort')) {
+        alert('审核失败：网络连接异常。请刷新页面后重试，如果持续失败请联系管理员。');
+      } else {
+        alert('审核失败：' + errMsg);
+      }
     }
     this.isReviewing = false; this.files = []; this.textContent = ''; await this.loadHistoryFromDB();
   }
@@ -884,7 +923,7 @@ export class ReviewAssistant {
 
   private renderLoadingOverlay(): string {
     const tc = REVIEW_TYPES[this.reviewType];
-    return `<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"><div class="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center"><div class="w-14 h-14 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-5"></div><h3 class="font-semibold text-gray-900 mb-2">AI 智能审核中</h3><div class="space-y-1.5 text-sm text-gray-500 mb-4"><div>📄 解析文件内容...</div><div>📚 检索「${tc?.datasetName||'知识库'}」...</div><div>🔴 检测错别字...</div><div>🤖 AI 对比标注...</div></div><div class="w-full bg-gray-100 rounded-full h-1.5"><div class="h-1.5 bg-blue-600 rounded-full animate-pulse" style="width:60%"></div></div></div></div>`;
+    return `<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"><div class="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center"><div class="w-14 h-14 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-5"></div><h3 class="font-semibold text-gray-900 mb-2">AI 智能审核中</h3><p id="loadingStatusText" class="text-sm text-blue-600 font-medium mb-3">正在准备审核...</p><div class="space-y-1.5 text-sm text-gray-500 mb-4"><div>📄 解析文件内容</div><div>📚 检索「${tc?.datasetName||'知识库'}」</div><div>🔴 检测错别字</div><div>🤖 AI 对比标注</div></div><div class="w-full bg-gray-100 rounded-full h-1.5"><div class="h-1.5 bg-blue-600 rounded-full animate-pulse" style="width:60%"></div></div></div></div>`;
   }
 
   private renderImportingOverlay(): string {
