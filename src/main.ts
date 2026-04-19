@@ -18,6 +18,12 @@ export interface KnowledgeEntry { id: string; title: string; type: 'text' | 'url
 export interface AuthUser { id: string; username: string; role: 'admin' | 'user' | 'guest'; displayName: string }
 export interface ManagedUser { id: string; username: string; role: string; display_name: string; created_at: string }
 
+// ✅ pdf.js worker 引入方案：
+// 不用 Vite ?url import（在 Vite middleware 模式下对 .mjs 不稳定）
+// 而是在构建脚本中将 worker 复制到 public/ 目录
+// 开发和生产都通过 /pdf.worker.min.mjs 绝对路径引用
+// 构建脚本在 build.sh 和 dev.sh 中执行 cp 操作
+
 export const REVIEW_TYPES: Record<ReviewType, { label: string; icon: string; desc: string; dataset: string; datasetName: string }> = {
   personnel:     { label: '人员资质', icon: '👤', desc: '身份证、特种作业证、安全考核证等', dataset: 'personnel_qualification', datasetName: '人员资质标准库' },
   enterprise:    { label: '企业资质', icon: '🏢', desc: '营业执照、安全生产许可证等', dataset: 'enterprise_qualification', datasetName: '企业资质标准库' },
@@ -54,6 +60,8 @@ export class ReviewAssistant {
   private originalFileContent = '';
   private resultTab: 'issues' | 'comparison' | 'details' | 'suggestions' | 'references' = 'comparison';
   private showRegister = false;
+  // 文本粘贴模式：用户可直接粘贴文本内容，绕过文件解析
+  private textContent = '';
 
   mount(el: HTMLElement) {
     this.container = el;
@@ -179,16 +187,49 @@ export class ReviewAssistant {
           // 前端用 pdf.js 解析 PDF
           const arrayBuffer = await f.file.arrayBuffer();
           const pdfjsLib = await import('pdfjs-dist');
-          // worker 文件放在 public/ 目录，Vite 和 Express 都可直接访问
+
+          // ✅ Worker URL 解析：运行时动态检测
+          // 1. 优先检查 /pdf.worker.min.mjs（构建脚本复制到 public/ 的版本）
+          // 2. Vite 构建产物中 worker 会被打包为 /assets/pdf.worker.min-xxx.mjs
+          // 3. 如果都失败 → 降级为无 worker 模式（主线程解析）
           if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-            pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+            // 尝试 public/ 路径（dev.sh/build.sh 复制的版本）
+            const workerPaths = [
+              '/pdf.worker.min.mjs',  // 构建脚本从 node_modules 复制到 public/
+            ];
+            for (const wPath of workerPaths) {
+              try {
+                const resp = await fetch(wPath, { method: 'HEAD' });
+                if (resp.ok) {
+                  pdfjsLib.GlobalWorkerOptions.workerSrc = wPath;
+                  break;
+                }
+              } catch { /* 跳过不可用的路径 */ }
+            }
           }
-          // 添加超时保护，避免 worker 加载失败导致无限等待
-          const pdfPromise = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
-          const pdf = await Promise.race([
-            pdfPromise,
-            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF 解析超时，请尝试直接粘贴文本内容')), 30000))
-          ]);
+          let pdf: any;
+          try {
+            // 先尝试使用 worker 模式（性能更好）
+            const pdfPromise = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+            pdf = await Promise.race([
+              pdfPromise,
+              new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF 解析超时(30s)')), 30000))
+            ]);
+          } catch (workerErr) {
+            // Worker 加载失败 → 降级为无 worker 模式（主线程解析，稍慢但 100% 可靠）
+            console.warn('PDF worker 模式失败，降级为主线程解析:', workerErr);
+            pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+            try {
+              const pdfPromise = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer), useWorkerFetch: false, isEvalSupported: false, useSystemFonts: true }).promise;
+              pdf = await Promise.race([
+                pdfPromise,
+                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF 主线程解析也超时，请使用文本粘贴功能')), 60000))
+              ]);
+            } catch (fallbackErr) {
+              throw new Error('PDF 解析失败：' + (fallbackErr instanceof Error ? fallbackErr.message : '未知错误') + '。请使用下方文本粘贴功能直接粘贴文件内容。');
+            }
+          }
+
           const textParts: string[] = [];
           for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i);
@@ -197,7 +238,7 @@ export class ReviewAssistant {
             textParts.push(pageText);
           }
           const text = textParts.join('\n\n');
-          results.push({ name: f.name, content: text || '[PDF解析结果为空]' });
+          results.push({ name: f.name, content: text || '[PDF解析结果为空，请使用文本粘贴功能]' });
         } else if (['doc', 'docx'].includes(ext)) {
           // 前端用 JSZip 解析 Word
           const JSZip = (await import('jszip')).default;
@@ -207,9 +248,9 @@ export class ReviewAssistant {
           if (docXml) {
             const xml = await docXml.async('string');
             const text = xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-            results.push({ name: f.name, content: text || '[Word解析结果为空]' });
+            results.push({ name: f.name, content: text || '[Word解析结果为空，请使用文本粘贴功能]' });
           } else {
-            results.push({ name: f.name, content: '[Word文档结构异常]' });
+            results.push({ name: f.name, content: '[Word文档结构异常，请使用文本粘贴功能]' });
           }
         } else if (f.file.type.startsWith('image/')) {
           // 图片 base64（供多模态使用）
@@ -225,8 +266,9 @@ export class ReviewAssistant {
           results.push({ name: f.name, content: text });
         }
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : '未知错误';
         console.error(`文件 ${f.name} 解析失败:`, err);
-        results.push({ name: f.name, content: `[文件解析失败，请直接粘贴文本内容]` });
+        results.push({ name: f.name, content: `[文件解析失败: ${errMsg}]` });
       }
     }
 
@@ -234,16 +276,27 @@ export class ReviewAssistant {
   }
 
   async startReview() {
-    if (this.files.length === 0) { alert('请先上传文件'); return; }
+    // 优先使用文本粘贴内容，其次使用文件上传
+    const hasTextContent = this.textContent.trim().length > 0;
+    const hasFiles = this.files.length > 0;
+    if (!hasTextContent && !hasFiles) { alert('请先上传文件或粘贴文本内容'); return; }
+
     this.isReviewing = true; this.render();
     try {
-      // 前端解析文件 → 提取纯文本 → 发送到后端审核
-      const fileContents = await this.readFileContents();
-      let combinedContent = fileContents.map(f => `=== ${f.name} ===\n${f.content}`).join('\n\n---\n\n');
-      this.originalFileContent = combinedContent;
+      let combinedContent = '';
+
+      if (hasTextContent) {
+        // 文本粘贴模式：直接使用用户粘贴的文本，无需任何文件解析
+        combinedContent = this.textContent.trim();
+        this.originalFileContent = combinedContent;
+      } else {
+        // 文件上传模式：前端解析文件提取文本
+        const fileContents = await this.readFileContents();
+        combinedContent = fileContents.map(f => `=== ${f.name} ===\n${f.content}`).join('\n\n---\n\n');
+        this.originalFileContent = combinedContent;
+      }
 
       // 前端截断保护：避免 POST body 过大被生产环境反向代理拒绝 (HTTP 413)
-      // 限制文本内容为 50000 字符（约 150KB UTF-8），后端会进一步截取核心部分发给 LLM
       const MAX_FRONTEND_CHARS = 50000;
       let wasTruncated = false;
       if (combinedContent.length > MAX_FRONTEND_CHARS) {
@@ -255,23 +308,25 @@ export class ReviewAssistant {
         wasTruncated = true;
       }
 
+      const fileName = hasTextContent ? '粘贴文本内容' : this.files.map(f => f.name).join(', ');
+
       // 提交审核
       const response = await this.fetchWithTimeout('/api/review', {
         method: 'POST', headers: this.authHeaders(),
-        body: JSON.stringify({ fileName: fileContents.map(f=>f.name).join(', '), fileContent: combinedContent, reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role }),
+        body: JSON.stringify({ fileName, fileContent: combinedContent, reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role }),
       }, 120000);
       const data = await response.json();
       if (data.success && data.result) {
         this.currentReview = { id: data.id, file_name: data.fileName, review_type: data.reviewType, review_mode: data.reviewMode, user_role: this.role, status: 'completed', result: data.result, created_at: new Date().toISOString() };
         this.reviewMeta = { knowledgeUsed: data.knowledgeUsed, knowledgeChunks: data.knowledgeChunks, knowledgeDatasets: data.knowledgeDatasets, webSearchUsed: data.webSearchUsed, webSearchResults: data.webSearchResults };
         this.resultTab = 'comparison';
-        if (wasTruncated) { console.warn('文件内容较长，已截取核心部分进行审核。如需完整审核，请拆分为多个文件。'); }
+        if (wasTruncated) { console.warn('内容较长，已截取核心部分进行审核。如需完整审核，请拆分为多个文件。'); }
       } else { alert(data.error || '审核失败'); }
     } catch (err) {
       console.error('审核失败:', err);
       alert('审核失败：' + (err instanceof Error ? err.message : '网络异常'));
     }
-    this.isReviewing = false; this.files = []; await this.loadHistoryFromDB();
+    this.isReviewing = false; this.files = []; this.textContent = ''; await this.loadHistoryFromDB();
   }
 
   async viewHistoryDetail(id: string) {
@@ -498,6 +553,11 @@ export class ReviewAssistant {
         </div>
         <input type="file" id="fileInput" class="hidden" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" />
         ${this.files.length > 0 ? `<div class="mt-3 space-y-2">${this.files.map(f => this.renderFileItem(f)).join('')}</div>` : ''}
+        <div class="mt-3 pt-3 border-t border-gray-100">
+          <div class="flex items-center gap-1.5 mb-2"><span class="text-xs text-gray-500">📝</span><label class="text-xs font-medium text-gray-600">或直接粘贴文本内容</label></div>
+          <textarea id="textContentInput" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 resize-none" rows="3" placeholder="从文件中复制文本内容粘贴到此处，可跳过文件解析，100%可靠...">${this.textContent}</textarea>
+          ${this.textContent.trim() ? '<p class="text-xs text-green-600 mt-1">已输入 ' + this.textContent.trim().length + ' 字符，点击下方"开始审核"即可</p>' : ''}
+        </div>
       </div>
     `;
   }
@@ -560,8 +620,8 @@ export class ReviewAssistant {
             </div>
           </div>
         </div>
-        <button id="startReviewBtn" class="w-full mt-4 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-lg font-medium hover:from-blue-700 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm" ${this.files.length===0?'disabled':''}>
-          开始审核 ${this.files.length>0?`(${this.files.length}个文件)`:''}
+        <button id="startReviewBtn" class="w-full mt-4 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-lg font-medium hover:from-blue-700 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm" ${this.files.length===0 && this.textContent.trim().length===0?'disabled':''}>
+          开始审核 ${this.files.length>0?`(${this.files.length}个文件)`:this.textContent.trim()?'(文本内容)':''}
         </button>
       </div>
     `;
@@ -882,6 +942,15 @@ export class ReviewAssistant {
     }
 
     document.querySelectorAll('[data-remove]').forEach(btn => btn.addEventListener('click', e => { e.stopPropagation(); const id=(e.target as HTMLElement).dataset.remove; if(id) this.removeFile(id); }));
+
+    // 文本粘贴输入监听
+    const textInput = document.getElementById('textContentInput') as HTMLTextAreaElement;
+    if (textInput) {
+      textInput.addEventListener('input', () => { this.textContent = textInput.value; });
+      // 防止回车触发登录等其他事件
+      textInput.addEventListener('keydown', (e) => e.stopPropagation());
+    }
+
     document.querySelectorAll('.review-type-btn').forEach(btn => btn.addEventListener('click', () => { const type=(btn as HTMLElement).dataset.type as ReviewType; if(type) this.setReviewType(type); }));
     document.querySelectorAll('.review-mode-btn').forEach(btn => btn.addEventListener('click', () => { const mode=(btn as HTMLElement).dataset.mode as ReviewMode; if(mode) this.setReviewMode(mode); }));
 

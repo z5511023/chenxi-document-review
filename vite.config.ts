@@ -18,7 +18,6 @@ export default defineConfig({
     },
   },
   appType: 'spa',
-  // 确保 Vite 不会拦截 API 请求
   esbuild: {
     target: 'esnext',
   },

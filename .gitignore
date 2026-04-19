@@ -58,8 +58,11 @@ assets/*.pdf
 assets/*.png
 assets/*.jpg
 
-# pdf.js worker (copied from node_modules during build)
+# pdf.js worker (构建脚本从 node_modules 复制到 public/)
 public/pdf.worker.min.mjs
+
+# pdf.js worker 源文件备份（从 node_modules 复制到 src/）
+src/pdf.worker.min.mjs
 
 # OS files
 .DS_Store
