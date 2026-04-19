@@ -62,6 +62,23 @@ export class ReviewAssistant {
   private showRegister = false;
   // 文本粘贴模式：用户可直接粘贴文本内容，绕过文件解析
   private textContent = '';
+  // 文件预览模式：仅解析文件提取文本，不调用 LLM（零 Token 消耗）
+  private previewContent: string | null = null;
+  private isPreviewing = false;
+
+  /** 显示轻量提示（替代 alert，不打断用户操作） */
+  private showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
+    const existing = document.getElementById('appToast');
+    if (existing) existing.remove();
+    const colors = { success: 'bg-green-600', error: 'bg-red-600', info: 'bg-blue-600' };
+    const icons = { success: '✓', error: '✕', info: 'ℹ' };
+    const toast = document.createElement('div');
+    toast.id = 'appToast';
+    toast.className = `fixed top-4 left-1/2 -translate-x-1/2 ${colors[type]} text-white px-5 py-3 rounded-xl shadow-lg z-[100] flex items-center gap-2 text-sm font-medium transition-all`;
+    toast.innerHTML = `<span class="text-base">${icons[type]}</span> ${message}`;
+    document.body.appendChild(toast);
+    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3000);
+  }
 
   mount(el: HTMLElement) {
     this.container = el;
@@ -147,10 +164,15 @@ export class ReviewAssistant {
   // ==================== 文件和审核 ====================
   addFiles(files: File[]) {
     const validTypes = ['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','image/jpeg','image/png','image/jpg'];
+    let addedCount = 0;
     for (const file of files) {
       if (!validTypes.includes(file.type)) { alert(`文件 "${file.name}" 格式不支持`); continue; }
       if (file.size > 20*1024*1024) { alert(`文件 "${file.name}" 超过20MB`); continue; }
       this.files.push({ id: `${Date.now()}-${Math.random().toString(36).substr(2,9)}`, name: file.name, size: file.size, type: file.type, file });
+      addedCount++;
+    }
+    if (addedCount > 0) {
+      this.showToast(`已添加 ${addedCount} 个文件，可选择"预览解析"查看内容或"开始审核"`, 'success');
     }
     this.render();
   }
@@ -294,6 +316,45 @@ export class ReviewAssistant {
     return results;
   }
 
+  /** 文件预览：仅解析文件提取文本，不调用 LLM，零 Token 消耗 */
+  async previewFile() {
+    const hasTextContent = this.textContent.trim().length > 0;
+    const hasFiles = this.files.length > 0;
+    if (!hasTextContent && !hasFiles) { alert('请先上传文件或粘贴文本内容'); return; }
+
+    this.isPreviewing = true; this.render();
+    this.updateLoadingStatus('正在解析文件...');
+
+    try {
+      let combinedContent = '';
+      if (hasTextContent) {
+        combinedContent = this.textContent.trim();
+      } else {
+        const fileContents = await this.readFileContents();
+        combinedContent = fileContents.map(f => `=== ${f.name} ===\n${f.content}`).join('\n\n---\n\n');
+      }
+
+      // 前端截断（预览模式不限，显示全部）
+      if (combinedContent.length > 200000) {
+        const headLen = Math.floor(200000 * 0.8);
+        const tailLen = 200000 - headLen;
+        combinedContent = combinedContent.substring(0, headLen)
+          + '\n\n[... 中间内容因长度限制已省略 ...]\n\n'
+          + combinedContent.substring(combinedContent.length - tailLen);
+      }
+
+      this.previewContent = combinedContent;
+      console.log(`[文件预览] 解析完成，文本长度 ${combinedContent.length} 字符`);
+    } catch (err) {
+      console.error('[文件预览] 解析失败:', err);
+      this.previewContent = `[解析失败: ${err instanceof Error ? err.message : '未知错误'}]`;
+    }
+
+    this.isPreviewing = false; this.render();
+  }
+
+  closePreview() { this.previewContent = null; this.render(); }
+
   async startReview() {
     // 优先使用文本粘贴内容，其次使用文件上传
     const hasTextContent = this.textContent.trim().length > 0;
@@ -322,7 +383,8 @@ export class ReviewAssistant {
       }
 
       // 前端截断保护：避免 POST body 过大被生产环境反向代理拒绝 (HTTP 413)
-      const MAX_FRONTEND_CHARS = 50000;
+      // 前端限制 100K 字符，后端再根据审核模式进一步截断
+      const MAX_FRONTEND_CHARS = 100000;
       let wasTruncated = false;
       if (combinedContent.length > MAX_FRONTEND_CHARS) {
         const headLen = Math.floor(MAX_FRONTEND_CHARS * 0.8);
@@ -444,6 +506,7 @@ export class ReviewAssistant {
         </div>
       </div>
       ${this.isReviewing ? this.renderLoadingOverlay() : ''}
+      ${this.isPreviewing ? this.renderPreviewLoadingOverlay() : ''}
       ${this.isImporting ? this.renderImportingOverlay() : ''}
     `;
   }
@@ -575,7 +638,7 @@ export class ReviewAssistant {
           ${this.renderUploadArea()} ${this.renderReviewSettings()} ${this.renderHistory()}
         </div>
         <div class="bg-white rounded-xl border border-gray-200 shadow-sm min-h-[600px]">
-          ${this.currentReview ? this.renderResult() : this.renderEmptyState()}
+          ${this.previewContent ? this.renderPreview() : this.currentReview ? this.renderResult() : this.renderEmptyState()}
         </div>
       </div>
     `;
@@ -586,7 +649,7 @@ export class ReviewAssistant {
       <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
         <div class="flex items-center gap-2 mb-3"><div class="w-7 h-7 bg-blue-50 rounded-lg flex items-center justify-center text-sm"><span class="text-blue-600">📎</span></div><h3 class="font-semibold text-gray-900 text-sm">文件上传</h3></div>
         <div class="upload-area border-2 border-dashed border-gray-300 rounded-xl p-6 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/50 transition-all" id="uploadArea">
-          <div class="w-12 h-12 bg-gradient-to-br from-blue-600 to-blue-500 rounded-full flex items-center justify-center mx-auto mb-3"><span class="text-white text-xl">📤</span></div>
+          <svg class="w-10 h-10 mx-auto mb-3 text-blue-500" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 2l5 5h-5V4zM6 20V4h5v7h7v9H6zm1-7h2v3h6v-3h2l-5-5-5 5z"/></svg>
           <p class="text-gray-700 text-sm mb-1">拖拽文件到此处，或 <span class="text-blue-600 font-medium">点击上传</span></p>
           <p class="text-xs text-gray-500">PDF/Word/Excel/图片，20MB内</p>
         </div>
@@ -596,6 +659,12 @@ export class ReviewAssistant {
           <div class="flex items-center gap-1.5 mb-2"><span class="text-xs text-gray-500">📝</span><label class="text-xs font-medium text-gray-600">或直接粘贴文本内容</label></div>
           <textarea id="textContentInput" class="w-full border border-gray-200 rounded-lg p-2.5 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 resize-none" rows="3" placeholder="从文件中复制文本内容粘贴到此处，可跳过文件解析，100%可靠...">${this.textContent}</textarea>
           ${this.textContent.trim() ? '<p class="text-xs text-green-600 mt-1">已输入 ' + this.textContent.trim().length + ' 字符，点击下方"开始审核"即可</p>' : ''}
+        </div>
+        <div class="mt-3 flex gap-2">
+          <button id="previewFileBtn" class="flex-1 py-2 px-3 border border-green-500 text-green-600 rounded-lg font-medium hover:bg-green-50 transition-all text-sm ${this.files.length===0 && this.textContent.trim().length===0?'opacity-50 cursor-not-allowed':''}">
+            👁 预览解析
+          </button>
+          <p class="text-xs text-gray-400 self-center">不消耗Token</p>
         </div>
       </div>
     `;
@@ -701,6 +770,39 @@ export class ReviewAssistant {
     const h = Math.floor(diff/3600000); if(h<24) return `${h}小时前`;
     const day = Math.floor(diff/86400000); if(day<7) return `${day}天前`;
     return d.toLocaleDateString('zh-CN');
+  }
+
+  private renderPreview(): string {
+    const content = this.previewContent || '';
+    const charCount = content.length;
+    // 简单地转义 HTML，防止 XSS
+    const escaped = content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `
+      <div class="h-full flex flex-col">
+        <div class="p-4 border-b border-gray-200 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 bg-green-50 rounded-full flex items-center justify-center"><span class="text-green-600">👁</span></div>
+            <div>
+              <h3 class="font-semibold text-gray-900 text-sm">文件预览（未消耗Token）</h3>
+              <p class="text-xs text-gray-500">共提取 ${charCount.toLocaleString()} 字符文本内容</p>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="copyPreviewBtn" class="px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-50">📋 复制文本</button>
+            <button id="closePreviewBtn" class="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500">✕</button>
+          </div>
+        </div>
+        <div class="flex-1 overflow-auto p-4">
+          <pre class="text-xs text-gray-800 whitespace-pre-wrap break-all leading-relaxed font-mono bg-gray-50 p-4 rounded-lg border">${escaped}</pre>
+        </div>
+        <div class="p-3 border-t border-gray-100 bg-gray-50 text-center">
+          <p class="text-xs text-gray-500 mb-2">确认内容无误后，点击"开始审核"调用 AI 审核</p>
+          <button id="startReviewFromPreviewBtn" class="px-6 py-2 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-lg font-medium hover:from-blue-700 hover:to-blue-600 text-sm">
+            开始审核
+          </button>
+        </div>
+      </div>
+    `;
   }
 
   private renderEmptyState(): string {
@@ -926,6 +1028,10 @@ export class ReviewAssistant {
     return `<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"><div class="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center"><div class="w-14 h-14 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-5"></div><h3 class="font-semibold text-gray-900 mb-2">AI 智能审核中</h3><p id="loadingStatusText" class="text-sm text-blue-600 font-medium mb-3">正在准备审核...</p><div class="space-y-1.5 text-sm text-gray-500 mb-4"><div>📄 解析文件内容</div><div>📚 检索「${tc?.datasetName||'知识库'}」</div><div>🔴 检测错别字</div><div>🤖 AI 对比标注</div></div><div class="w-full bg-gray-100 rounded-full h-1.5"><div class="h-1.5 bg-blue-600 rounded-full animate-pulse" style="width:60%"></div></div></div></div>`;
   }
 
+  private renderPreviewLoadingOverlay(): string {
+    return `<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"><div class="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center"><div class="w-14 h-14 border-4 border-green-200 border-t-green-600 rounded-full animate-spin mx-auto mb-5"></div><h3 class="font-semibold text-gray-900 mb-2">👁 文件预览解析中</h3><p id="loadingStatusText" class="text-sm text-green-600 font-medium mb-3">正在提取文本...</p><p class="text-xs text-gray-400">此操作不消耗 Token</p></div></div>`;
+  }
+
   private renderImportingOverlay(): string {
     return `<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"><div class="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center"><div class="w-14 h-14 border-4 border-green-200 border-t-green-600 rounded-full animate-spin mx-auto mb-5"></div><h3 class="font-semibold text-gray-900 mb-2">正在按模块导入</h3><p class="text-sm text-gray-500">文档分类向量化入库中...</p></div></div>`;
   }
@@ -999,6 +1105,17 @@ export class ReviewAssistant {
 
     const startBtn = document.getElementById('startReviewBtn');
     if (startBtn && !startBtn.hasAttribute('disabled')) startBtn.addEventListener('click', () => this.startReview());
+
+    // 预览按钮（不消耗 Token）
+    const previewBtn = document.getElementById('previewFileBtn');
+    if (previewBtn && (this.files.length > 0 || this.textContent.trim().length > 0)) previewBtn.addEventListener('click', () => this.previewFile());
+
+    // 预览面板按钮
+    document.getElementById('closePreviewBtn')?.addEventListener('click', () => this.closePreview());
+    document.getElementById('copyPreviewBtn')?.addEventListener('click', () => {
+      if (this.previewContent) { navigator.clipboard.writeText(this.previewContent); this.showToast('文本已复制到剪贴板', 'success'); }
+    });
+    document.getElementById('startReviewFromPreviewBtn')?.addEventListener('click', () => this.startReview());
 
     document.querySelectorAll('.history-item').forEach(item => item.addEventListener('click', e => {
       const target = e.target as HTMLElement;

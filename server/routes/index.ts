@@ -569,17 +569,24 @@ router.post('/api/review', requireAuth, async (req: Request, res: Response) => {
       : '\n\n详细审核模式，全面深入审核，必须包含annotatedContent。';
     systemPrompt += contextSection;
 
-    // 智能截取：PDF已自动跳过审批表/目录，这里只需截断
-    const maxContentLength = reviewMode === 'detailed' ? 30000 : 15000;
+    // 智能截取：
+    // doubao-seed-1-6-lite 上下文 128K tokens ≈ 约 20万汉字
+    // 快速审核：取核心 50000 字符（约 25000 字）
+    // 详细审核：取核心 80000 字符（约 40000 字）
+    // 截取策略：跳过文件开头的前言/审批表（前500字），取主体内容的 80% 头部 + 20% 尾部
+    const maxContentLength = reviewMode === 'detailed' ? 80000 : 50000;
     let contentToSend = fileContent;
 
     if (fileContent.length > maxContentLength) {
-      // 取前部核心内容 + 尾部结论部分
+      // 尝试跳过前言/审批表部分（通常前500字是封面/审批页）
+      const skipIntro = 500;
+      const actualStart = fileContent.length > skipIntro + maxContentLength ? skipIntro : 0;
+      const availableContent = fileContent.substring(actualStart);
       const headLen = Math.floor(maxContentLength * 0.8);
       const tailLen = maxContentLength - headLen;
-      contentToSend = fileContent.substring(0, headLen)
-        + '\n\n[... 中间内容省略 ...]\n\n'
-        + fileContent.substring(fileContent.length - tailLen);
+      contentToSend = availableContent.substring(0, headLen)
+        + '\n\n[... 中间部分内容因长度限制已省略，省略约 ' + Math.max(0, availableContent.length - maxContentLength).toLocaleString() + ' 字符 ...]\n\n'
+        + availableContent.substring(availableContent.length - tailLen);
     }
 
     const messages = [
