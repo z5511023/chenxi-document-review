@@ -59,7 +59,7 @@ const REVIEW_PROMPTS: Record<string, string> = {
 {
   "conclusion": "pass/fail/warning",
   "score": 0-100,
-  "issues": [{"level":"high/medium/low","title":"问题标题","description":"问题描述","suggestion":"整改建议","location":"问题位置"}],
+  "issues": [{"level":"high/medium/low","title":"问题标题","description":"问题描述","suggestion":"整改建议","location":"问题位置（标注页码如第X页）"}],
   "suggestions": ["建议1","建议2"],
   "details": "详细分析说明",
   "annotatedContent": "将文件原文内容返回，错别字用【🔴错别字：应改为"正确字"】标注，问题处用【❌问题：xxx】标注，需注意处用【⚠️提醒：xxx】标注",
@@ -142,7 +142,12 @@ annotatedContent 是最重要的输出字段，必须严格按要求生成：
 3. 绝对不能只返回原始文本而不加任何标注！
 4. 绝对不能省略原文内容！
 5. 每个issue都必须在annotatedContent中有对应的标注
-6. 示例：原文"施工人员因按照规定佩戴安全帽"→ annotatedContent:"施工人员因【🔴错别字：应改为"应"】按照规定佩戴安全帽"`;
+6. 示例：原文"施工人员因按照规定佩戴安全帽"→ annotatedContent:"施工人员因【🔴错别字：应改为"应"】按照规定佩戴安全帽"
+
+【关键 - issues 中的 location 字段要求】
+文件文本中包含【第N页】格式的页码标记，请在 issues 的 location 字段中标注问题所在的页码，格式为"第X页"或"第X-Y页"。
+如果问题涉及多页，标注起始页即可。例如：location: "第15页" 或 location: "第3-5页"。
+这对于审查人在上百页的文档中快速定位问题至关重要，必须标注！`;
 
 Object.keys(REVIEW_PROMPTS).forEach((key) => {
   REVIEW_PROMPTS[key] += TYPO_CHECK_INSTRUCTION;

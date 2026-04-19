@@ -294,14 +294,13 @@ export class ReviewAssistant {
             }
           }
 
-          // 逐页提取文本
+          // 逐页提取文本（插入页码标记方便审核定位）
           const textParts: string[] = [];
           for (let i = 1; i <= pdf.numPages; i++) {
             this.updateLoadingStatus(`正在提取第 ${i}/${pdf.numPages} 页文本...`);
             const page = await pdf.getPage(i);
             const textContent = await page.getTextContent();
-            const pageText = textContent.items.map((item: any) => item.str).join(' ');
-            textParts.push(pageText);
+	            textParts.push(`【第${i}页】\n${pageText}`);
           }
           let text = textParts.join('\n\n');
 
@@ -1097,9 +1096,9 @@ export class ReviewAssistant {
                 <span class="text-sm font-bold ${result.score>=80?'text-green-600':result.score>=60?'text-yellow-600':'text-red-600'}">${result.score || '--'}分</span>
               </div>
             </div>
-            ${highIssues.length > 0 ? `<div class="border border-red-200 rounded-lg p-2.5 bg-red-50/50"><div class="text-xs font-semibold text-red-700 mb-1.5">🔴 严重 (${highIssues.length})</div><div class="space-y-1.5">${highIssues.map(i => `<div class="text-xs"><span class="font-medium text-red-800">${i.title}</span>${i.description ? `<p class="text-red-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>` : ''}
-            ${mediumIssues.length > 0 ? `<div class="border border-yellow-200 rounded-lg p-2.5 bg-yellow-50/50"><div class="text-xs font-semibold text-yellow-700 mb-1.5">⚠️ 中等 (${mediumIssues.length})</div><div class="space-y-1.5">${mediumIssues.map(i => `<div class="text-xs"><span class="font-medium text-yellow-800">${i.title}</span>${i.description ? `<p class="text-yellow-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>` : ''}
-            ${lowIssues.length > 0 ? `<div class="border border-blue-200 rounded-lg p-2.5 bg-blue-50/50"><div class="text-xs font-semibold text-blue-700 mb-1.5">💡 轻微 (${lowIssues.length})</div><div class="space-y-1.5">${lowIssues.map(i => `<div class="text-xs"><span class="font-medium text-blue-800">${i.title}</span>${i.description ? `<p class="text-blue-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>` : ''}
+            ${highIssues.length > 0 ? `<div class="border border-red-200 rounded-lg p-2.5 bg-red-50/50"><div class="text-xs font-semibold text-red-700 mb-1.5">🔴 严重 (${highIssues.length})</div><div class="space-y-1.5">${highIssues.map(i => `<div class="text-xs"><span class="font-medium text-red-800">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-red-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>` : ''}
+            ${mediumIssues.length > 0 ? `<div class="border border-yellow-200 rounded-lg p-2.5 bg-yellow-50/50"><div class="text-xs font-semibold text-yellow-700 mb-1.5">⚠️ 中等 (${mediumIssues.length})</div><div class="space-y-1.5">${mediumIssues.map(i => `<div class="text-xs"><span class="font-medium text-yellow-800">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-yellow-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>` : ''}
+            ${lowIssues.length > 0 ? `<div class="border border-blue-200 rounded-lg p-2.5 bg-blue-50/50"><div class="text-xs font-semibold text-blue-700 mb-1.5">💡 轻微 (${lowIssues.length})</div><div class="space-y-1.5">${lowIssues.map(i => `<div class="text-xs"><span class="font-medium text-blue-800">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-blue-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>` : ''}
             ${suggestions.length > 0 ? `<div class="border border-gray-200 rounded-lg p-2.5 bg-gray-50"><div class="text-xs font-semibold text-gray-700 mb-1.5">💡 建议 (${suggestions.length})</div><div class="space-y-1">${suggestions.map((s:string,i:number) => `<div class="text-xs text-gray-600 flex items-start gap-1"><span class="text-blue-500 flex-shrink-0">${i+1}.</span><span>${s}</span></div>`).join('')}</div></div>` : ''}
           </div>
         </div>
@@ -1455,7 +1454,7 @@ export class ReviewAssistant {
       const review = this.currentReview; const result = review?.result; if(!result) return;
       const dsNames = this.reviewMeta?.knowledgeDatasets||[];
       const sourceStr = [this.reviewMeta?.knowledgeUsed?`知识库(${dsNames.join(',')})`:'',this.reviewMeta?.webSearchUsed?'联网搜索':''].filter(Boolean).join(' + ')||'AI';
-      const report = `辰溪工程文件审核助手 - 审核报告\n========================================\n\n审核类型：${REVIEW_TYPES[review!.review_type as ReviewType]?.label}\n审核模式：${REVIEW_MODES[review!.review_mode as ReviewMode]?.label}\n文件名称：${review!.file_name}\n审核时间：${new Date(review!.created_at).toLocaleString('zh-CN')}\n知识来源：${sourceStr}\n\n审核结论：${result.conclusion==='pass'?'通过':result.conclusion==='fail'?'未通过':'需整改'}\n综合评分：${result.score}/100\n\n问题清单\n--------\n${!result.issues||result.issues.length===0?'无':result.issues.map((i,n)=>`${n+1}. [${i.level==='high'?'严重':i.level==='medium'?'中等':'轻微'}] ${i.title}\n   ${i.description}\n   建议：${i.suggestion}`).join('\n\n')}\n\n整改建议\n--------\n${(result.suggestions||[]).map((s:string,i:number)=>`${i+1}. ${s}`).join('\n')}\n\n详细分析\n--------\n${result.details}\n\n========================================\n辰溪工程文件审核助手 自动生成`.trim();
+      const report = `辰溪工程文件审核助手 - 审核报告\n========================================\n\n审核类型：${REVIEW_TYPES[review!.review_type as ReviewType]?.label}\n审核模式：${REVIEW_MODES[review!.review_mode as ReviewMode]?.label}\n文件名称：${review!.file_name}\n审核时间：${new Date(review!.created_at).toLocaleString('zh-CN')}\n知识来源：${sourceStr}\n\n审核结论：${result.conclusion==='pass'?'通过':result.conclusion==='fail'?'未通过':'需整改'}\n综合评分：${result.score}/100\n\n问题清单\n--------\n${!result.issues||result.issues.length===0?'无':result.issues.map((i,n)=>`${n+1}. [${i.level==='high'?'严重':i.level==='medium'?'中等':'轻微'}] ${i.title}${i.location?' ('+i.location+')':''}\n   ${i.description}\n   建议：${i.suggestion}`).join('\n\n')}\n\n整改建议\n--------\n${(result.suggestions||[]).map((s:string,i:number)=>`${i+1}. ${s}`).join('\n')}\n\n详细分析\n--------\n${result.details}\n\n========================================\n辰溪工程文件审核助手 自动生成`.trim();
       const blob = new Blob([report],{type:'text/plain;charset=utf-8'}); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href=url; link.download=`审核报告_${new Date().toISOString().slice(0,10)}.txt`; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url);
     });
 
