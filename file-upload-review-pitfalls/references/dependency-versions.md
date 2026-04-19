@@ -2,10 +2,13 @@
 
 ## 文件上传相关
 
-| 包名 | ❌ 不要用 | ✅ 推荐版本 | 原因 |
-|------|----------|-----------|------|
-| formidable | - | ^3.5.2 | 独立解析，不依赖 Express 版本 |
-| multer | ^1.x 或 ^2.x | 不要用 | v1 可能卡死，v2 与 Express 4.x 不兼容 |
+| 方案 | 适用场景 | 不适用场景 |
+|------|---------|-----------|
+| base64 + JSON POST | PaaS/受限代理环境 | 超大文件(>50MB) |
+| FormData + multer | 自建服务器 | PaaS 环境（HTTP 413） |
+| FormData + formidable | 自建服务器 | PaaS 环境（HTTP 413） |
+
+**结论：PaaS 环境必须用 base64 + JSON，不要用任何 multipart 方案。**
 
 ## PDF 解析相关
 

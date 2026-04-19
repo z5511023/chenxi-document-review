@@ -1,103 +1,102 @@
 # 文件上传解析完整指南
 
-## 后端接口实现（Express + formidable）
+## 核心原则：PaaS 环境用 base64 + JSON，不要用 multipart
 
-> ⚠️ 不要用 multer！multer v1/v2 在生产环境都有兼容性问题，会导致上传请求挂起。用 formidable 替代。
+生产环境（PaaS）的反向代理可能对 multipart/form-data 请求有 body size 限制，导致 HTTP 413。必须用 `readAsDataURL` + JSON POST 绕过。
+
+## 前端上传实现
 
 ```typescript
-import formidable from 'formidable';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import { writeFile, unlink, readFile } from 'fs/promises';
-import path from 'path';
+async function uploadAndParseFiles(files: File[]): Promise<{ name: string; content: string }[]> {
+  // 将文件读取为 base64，通过 JSON 发送
+  const fileData = [];
+  for (const f of files) {
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve(result.split(',')[1]); // 去掉 data:mime;base64, 前缀
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(f);
+    });
+    fileData.push({ name: f.name, data: base64, type: f.type });
+  }
 
-const execFileAsync = promisify(execFile);
+  const response = await fetch('/api/parse-file', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ files: fileData }),
+  });
+  const data = await response.json();
+  if (data.success && data.files) return data.files;
+  throw new Error(data.error || '文件解析失败');
+}
+```
 
-const FORM_OPTIONS: formidable.Options = {
-  maxFileSize: 20 * 1024 * 1024,
-  multiples: true,
-  keepExtensions: true,
-};
+## 后端接口实现（Express + JSON body）
+
+```typescript
+// express.json() 必须设置足够大的 limit
+app.use(express.json({ limit: '50mb' }));
 
 router.post('/api/parse-file', async (req, res) => {
-  req.setTimeout(60000);
-  res.setTimeout(60000);
+  const { files } = req.body as { files: { name: string; data: string; type: string }[] };
 
-  try {
-    const form = formidable(FORM_OPTIONS);
-    const [, files] = await form.parse(req);
-    const uploadedFiles = files.files; // 前端 FormData 用 'files' 字段名
+  if (!files || files.length === 0) {
+    return res.status(400).json({ error: '未上传文件' });
+  }
 
-    if (!uploadedFiles || uploadedFiles.length === 0) {
-      return res.status(400).json({ error: '未上传文件' });
-    }
+  const results = [];
 
-    const results: { name: string; content: string; pages?: number }[] = [];
+  for (const file of files) {
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    const fileBuffer = Buffer.from(file.data, 'base64'); // base64 → Buffer
 
-    for (const file of uploadedFiles) {
-      const ext = file.originalFilename?.split('.').pop()?.toLowerCase() || '';
-      const fileBuffer = await readFile(file.filepath);
-
-      if (ext === 'pdf' || file.mimetype === 'application/pdf') {
-        let parsedText = '';
-        let pageCount = 0;
-
-        // 优先 Python PyMuPDF
-        const usePython = await isPythonAvailable();
-        if (usePython) {
-          try {
-            const { stdout } = await execFileAsync('python3', [PDF_PARSER_SCRIPT, file.filepath, '0', '0'], {
-              maxBuffer: 50 * 1024 * 1024, timeout: 30000,
-            });
-            const parseResult = JSON.parse(stdout);
-            if (!parseResult.error) {
-              parsedText = parseResult.text || '';
-              pageCount = parseResult.pages || 0;
-            }
-          } catch { /* Python 失败，降级 */ }
-        }
-
-        // 降级：pdf-parse
-        if (!parsedText) {
-          const pdfParse = (await import('pdf-parse')).default;
-          const data = await pdfParse(fileBuffer);
-          parsedText = data.text || '';
-          pageCount = data.numpages || 0;
-        }
-
-        results.push({
-          name: file.originalFilename || 'unknown.pdf',
-          content: parsedText || '[PDF解析结果为空]',
-          pages: pageCount,
-        });
-
-      } else if (['doc', 'docx'].includes(ext)) {
-        const JSZip = (await import('jszip')).default;
-        const zip = await JSZip.loadAsync(fileBuffer);
-        const docXml = zip.file('word/document.xml');
-        if (docXml) {
-          const xml = await docXml.async('string');
-          const text = xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          results.push({ name: file.originalFilename || 'unknown.docx', content: text || '[Word解析结果为空]' });
-        }
-
-      } else if (file.mimetype?.startsWith('image/')) {
-        const base64 = fileBuffer.toString('base64');
-        results.push({ name: file.originalFilename || 'unknown.png', content: `data:${file.mimetype};base64,${base64}` });
-
-      } else {
-        results.push({ name: file.originalFilename || 'unknown.txt', content: fileBuffer.toString('utf-8') });
+    if (ext === 'pdf') {
+      let parsedText = '';
+      // 优先 Python PyMuPDF（需要写临时文件）
+      if (await isPythonAvailable()) {
+        const tmpPath = `/tmp/pdf_${Date.now()}.pdf`;
+        await writeFile(tmpPath, fileBuffer);
+        try {
+          const { stdout } = await execFileAsync('python3', [PDF_PARSER_SCRIPT, tmpPath, '0', '0'], {
+            maxBuffer: 50 * 1024 * 1024, timeout: 30000,
+          });
+          const parseResult = JSON.parse(stdout);
+          if (!parseResult.error) parsedText = parseResult.text || '';
+        } catch { /* Python 失败，降级 */ }
+        try { await unlink(tmpPath); } catch { /* ignore */ }
       }
 
-      // 清理 formidable 临时文件
-      try { await unlink(file.filepath); } catch { /* ignore */ }
-    }
+      // 降级：pdf-parse
+      if (!parsedText) {
+        const pdfParse = (await import('pdf-parse')).default;
+        const data = await pdfParse(fileBuffer);
+        parsedText = data.text || '';
+      }
 
-    res.json({ success: true, files: results });
-  } catch (error) {
-    console.error('File parse error:', error);
-    if (!res.headersSent) res.status(500).json({ error: '文件解析失败' });
+      results.push({ name: file.name, content: parsedText || '[PDF解析结果为空]' });
+
+    } else if (['doc', 'docx'].includes(ext)) {
+      const JSZip = (await import('jszip')).default;
+      const zip = await JSZip.loadAsync(fileBuffer);
+      const docXml = zip.file('word/document.xml');
+      if (docXml) {
+        const xml = await docXml.async('string');
+        const text = xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        results.push({ name: file.name, content: text || '[Word解析结果为空]' });
+      }
+
+    } else if (file.type?.startsWith('image/')) {
+      results.push({ name: file.name, content: `[图片: ${file.name}]\ndata:${file.type};base64,${file.data}` });
+
+    } else {
+      results.push({ name: file.name, content: fileBuffer.toString('utf-8') });
+    }
   }
+
+  res.json({ success: true, files: results });
 });
 ```
 

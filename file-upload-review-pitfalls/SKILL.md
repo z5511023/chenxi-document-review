@@ -32,14 +32,34 @@ fetch('/api/parse-file', { method: 'POST', body: formData });
 
 详见 `references/file-parsing-guide.md`。
 
-### 规则 2：不要用 multer，用 formidable
+### 规则 2：在 PaaS 环境不要用 multipart/form-data 上传文件
 
-multer v1 与 Express 4.x 有兼容性风险，multer v2 完全不兼容，生产环境可能导致上传请求挂起无响应。使用 formidable 替代（无 Express 依赖，独立解析 multipart 表单）。
+生产环境的反向代理（nginx）可能对 multipart 请求有 body size 限制，导致 HTTP 413 错误，即使文件很小也会被拒绝。用 base64 + JSON 替代。
 
 ```
-✅ formidable: ^3.5.2（独立解析，不依赖 Express 版本）
-❌ multer v1: 可能卡死
-❌ multer v2: 与 Express 4.x 不兼容
+✅ readAsDataURL → base64 → JSON POST（绕过代理 multipart 限制）
+❌ FormData + multipart/form-data（触发 HTTP 413）
+❌ multer / formidable（都是 multipart 方案，同样触发 413）
+```
+
+**前端：**
+```javascript
+const reader = new FileReader();
+reader.onload = () => {
+  const base64 = reader.result.split(',')[1];
+  fetch('/api/parse-file', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ files: [{ name: file.name, data: base64, type: file.type }] })
+  });
+};
+reader.readAsDataURL(file);
+```
+
+**后端：**
+```typescript
+const { files } = req.body; // express.json() 已解析
+const buffer = Buffer.from(file.data, 'base64');
 ```
 
 ### 规则 3：PDF 解析要有降级方案

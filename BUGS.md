@@ -35,16 +35,42 @@ const response = await fetch('/api/parse-file', { method: 'POST', body: formData
 
 ---
 
-### BUG-002：multer 导致上传接口卡死
+### BUG-002：HTTP 413 - 生产环境反向代理拒绝 multipart 文件上传
 
 | 项目 | 内容 |
 |------|------|
 | **严重级别** | 🔴 致命 |
 | **发现时间** | 生产环境部署后 |
-| **现象** | 上传任何文件（大小无关）进度条无限转圈，请求无响应 |
-| **根因** | multer v1/v2 在生产环境都有兼容性问题：v2 与 Express 4.x 不兼容导致请求挂起；v1 在某些配置下也会卡死 |
-| **修复** | 完全移除 multer，改用 `formidable@3.5.2`（独立解析 multipart，不依赖 Express 版本） |
-| **教训** | **不要用 multer**，用 formidable 替代。formidable 不依赖 Express，版本兼容问题更少 |
+| **现象** | 上传任何文件（即使 10KB）都返回 HTTP 413 (Request Entity Too Large)，进度条无限转圈 |
+| **根因** | 生产环境有反向代理（nginx），默认对 `multipart/form-data` 请求有 body size 限制，即使 Express 配置了 50mb 限制，代理层仍会拒绝 |
+| **修复** | 完全弃用 multipart 上传（FormData + multer/formidable），改用 `readAsDataURL` 将文件编码为 base64，通过 `application/json` POST 发送。JSON 请求走 `express.json({ limit: '50mb' })` 解析，不触发代理的 multipart 限制 |
+| **教训** | **在受限的 PaaS 环境中，不要用 multipart/form-data 上传文件，用 base64 + JSON 替代** |
+
+**前端代码：**
+```javascript
+// ✅ 正确：readAsDataURL 编码为 base64，JSON 发送
+const reader = new FileReader();
+reader.onload = () => {
+  const base64 = reader.result.split(',')[1]; // 去掉 data:mime;base64, 前缀
+  fetch('/api/parse-file', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ files: [{ name: file.name, data: base64, type: file.type }] })
+  });
+};
+reader.readAsDataURL(file);
+```
+
+**后端代码：**
+```typescript
+router.post('/api/parse-file', async (req, res) => {
+  const { files } = req.body; // express.json() 已解析
+  for (const file of files) {
+    const buffer = Buffer.from(file.data, 'base64'); // base64 → Buffer
+    // ... 解析 PDF/Word 等
+  }
+});
+```
 
 ---
 
