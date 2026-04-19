@@ -57,7 +57,7 @@ export class ReviewAssistant {
   private knowledgeFileContent: string = '';
   private knowledgeFileName: string = '';
   // 审核依据：按模块绑定，管理员在知识库中配置
-  private moduleConstraints: Record<string, { mode: 'none' | 'reference' | 'rules'; fileContent?: string; fileName?: string; rules?: string }> = {};
+  private moduleConstraints: Record<string, { mode: 'smart' | 'none' | 'reference' | 'rules'; fileContent?: string; fileName?: string; rules?: string }> = {};
   private isImporting = false;
   private managedUsers: ManagedUser[] = [];
   private reviewMeta: { knowledgeUsed?: boolean; knowledgeChunks?: number; knowledgeDatasets?: string[]; webSearchUsed?: boolean; webSearchResults?: number } | null = null;
@@ -1015,11 +1015,11 @@ export class ReviewAssistant {
           ${(result as any)._totalSegments > 1 ? `<div class="mt-1.5 px-2.5 py-1.5 bg-blue-50 rounded-lg flex items-center gap-2 text-xs"><span class="text-blue-600">📄 全文分段审核</span><span class="text-gray-600">共 ${(result as any)._totalSegments} 段，每段独立审核后合并结果，全文覆盖无遗漏</span></div>` : ''}
         </div>
         <div class="px-4 pt-2 flex gap-2 border-b border-gray-200 overflow-x-auto">
-          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='comparison'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="comparison">📋 对比标注</button>
-          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='issues'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="issues">问题 (${result.issues?.length||0})</button>
-          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='details'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="details">分析</button>
-          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='suggestions'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="suggestions">建议</button>
-          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='references'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="references">来源</button>
+		          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='comparison'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="comparison">📋 对比标注</button>
+		          ${issues.length > 0 ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='issues'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="issues">问题 (${issues.length})</button>` : ''}
+		          ${result.details ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='details'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="details">分析</button>` : ''}
+		          ${(result.suggestions && result.suggestions.length > 0) ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='suggestions'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="suggestions">建议 (${result.suggestions.length})</button>` : ''}
+		          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='references'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="references">来源</button>
         </div>
         <div class="flex-1 overflow-y-auto p-4">
           <div id="tab-comparison" class="tab-content ${this.resultTab==='comparison'?'':'hidden'}">${this.renderComparisonView(result)}</div>
@@ -1034,7 +1034,14 @@ export class ReviewAssistant {
 
   private renderComparisonView(result: ReviewResult): string {
     const annotated = result.annotatedContent || '';
-    if (!annotated) return `<div class="text-center py-10 text-gray-500"><div class="text-3xl mb-2">📋</div><p class="text-sm">无对比标注数据</p></div>`;
+    const issues = result.issues || [];
+    const suggestions = result.suggestions || [];
+    
+    if (!annotated && issues.length === 0) {
+      return `<div class="text-center py-10 text-gray-500"><div class="text-3xl mb-2">📋</div><p class="text-sm">无审核标注数据</p></div>`;
+    }
+
+    // 高亮标注内容
     const highlighted = annotated
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       .replace(/【🔴错别字：应改为"([^"]+)"】/g, '<mark class="bg-red-300 text-red-900 px-1 rounded font-bold border-b-2 border-red-500" title="错别字">🔴 应为"$1"</mark>')
@@ -1042,16 +1049,30 @@ export class ReviewAssistant {
       .replace(/【❌格式错误：([^】]+)】/g, '<mark class="bg-red-200 text-red-800 px-1 rounded font-medium">❌ $1</mark>')
       .replace(/【⚠️提醒：([^】]+)】/g, '<mark class="bg-yellow-200 text-yellow-800 px-1 rounded font-medium">⚠️ $1</mark>')
       .replace(/\n/g,'<br/>');
-    const originalText = (this.originalFileContent || result.details || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br/>');
+
     const typoCount = (annotated.match(/🔴错别字/g) || []).length;
     const errorCount = (annotated.match(/【❌/g) || []).length;
     const warnCount = (annotated.match(/【⚠️/g) || []).length;
     const totalAnnotations = typoCount + errorCount + warnCount;
-    const noAnnotationHint = totalAnnotations === 0
-      ? `<div class="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
-          ⚠️ AI 未在文本中发现需标注的问题（错别字/错误/提醒）。如果文件确实存在问题，请尝试使用"详细审核"模式重新审核。
+    const noAnnotationHint = totalAnnotations === 0 && annotated
+      ? `<div class="mb-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+          ⚠️ AI 未在文本中发现需标注的问题。如果文件确实存在问题，请尝试使用"详细审核"模式。
         </div>`
       : '';
+
+    // 结论样式
+    const conclusionMap: Record<string, {text:string;icon:string;bg:string;badge:string}> = {
+      pass: {text:'通过',icon:'✅',bg:'bg-green-50 border-green-200',badge:'bg-green-100 text-green-700'},
+      warning: {text:'需关注',icon:'⚠️',bg:'bg-yellow-50 border-yellow-200',badge:'bg-yellow-100 text-yellow-700'},
+      fail: {text:'需整改',icon:'🔴',bg:'bg-red-50 border-red-200',badge:'bg-red-100 text-red-700'},
+    };
+    const conclusion = conclusionMap[result.conclusion || 'warning'] || conclusionMap.warning;
+
+    // 问题列表按级别分组
+    const highIssues = issues.filter(i => i.level === 'high');
+    const mediumIssues = issues.filter(i => i.level === 'medium');
+    const lowIssues = issues.filter(i => i.level === 'low');
+
     return `
       ${noAnnotationHint}
       <div class="mb-3 flex items-center gap-3 flex-wrap">
@@ -1060,14 +1081,27 @@ export class ReviewAssistant {
         <span class="text-xs flex items-center gap-1"><span class="w-2.5 h-2.5 bg-red-200 rounded inline-block"></span> 错误/问题 (${errorCount})</span>
         <span class="text-xs flex items-center gap-1"><span class="w-2.5 h-2.5 bg-yellow-200 rounded inline-block"></span> 提醒 (${warnCount})</span>
       </div>
-      <div class="grid grid-cols-2 gap-3">
-        <div>
-          <div class="text-xs font-semibold text-gray-700 mb-1.5">📄 原始文件</div>
-          <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 leading-relaxed max-h-[450px] overflow-y-auto font-mono whitespace-pre-wrap break-all">${originalText}</div>
+      <div class="grid grid-cols-5 gap-3">
+        <div class="col-span-3">
+          <div class="text-xs font-semibold text-gray-700 mb-1.5">📄 原文标注</div>
+          <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 leading-relaxed max-h-[500px] overflow-y-auto font-mono whitespace-pre-wrap break-all">${highlighted || '<span class="text-gray-400">无标注内容</span>'}</div>
         </div>
-        <div>
-          <div class="text-xs font-semibold text-gray-700 mb-1.5">🔍 AI 标注结果</div>
-          <div class="bg-blue-50/50 border border-blue-200 rounded-lg p-3 text-xs text-gray-700 leading-relaxed max-h-[450px] overflow-y-auto font-mono whitespace-pre-wrap break-all">${highlighted}</div>
+        <div class="col-span-2">
+          <div class="text-xs font-semibold text-gray-700 mb-1.5">📋 审查结果</div>
+          <div class="space-y-2.5 max-h-[500px] overflow-y-auto">
+            <!-- 结论卡片 -->
+            <div class="border rounded-lg p-3 ${conclusion.bg}">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-lg">${conclusion.icon}</span>
+                <span class="text-sm font-bold ${conclusion.badge} px-2 py-0.5 rounded">${conclusion.text}</span>
+                <span class="text-sm font-bold ${result.score>=80?'text-green-600':result.score>=60?'text-yellow-600':'text-red-600'}">${result.score || '--'}分</span>
+              </div>
+            </div>
+            ${highIssues.length > 0 ? `<div class="border border-red-200 rounded-lg p-2.5 bg-red-50/50"><div class="text-xs font-semibold text-red-700 mb-1.5">🔴 严重 (${highIssues.length})</div><div class="space-y-1.5">${highIssues.map(i => `<div class="text-xs"><span class="font-medium text-red-800">${i.title}</span>${i.description ? `<p class="text-red-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>` : ''}
+            ${mediumIssues.length > 0 ? `<div class="border border-yellow-200 rounded-lg p-2.5 bg-yellow-50/50"><div class="text-xs font-semibold text-yellow-700 mb-1.5">⚠️ 中等 (${mediumIssues.length})</div><div class="space-y-1.5">${mediumIssues.map(i => `<div class="text-xs"><span class="font-medium text-yellow-800">${i.title}</span>${i.description ? `<p class="text-yellow-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>` : ''}
+            ${lowIssues.length > 0 ? `<div class="border border-blue-200 rounded-lg p-2.5 bg-blue-50/50"><div class="text-xs font-semibold text-blue-700 mb-1.5">💡 轻微 (${lowIssues.length})</div><div class="space-y-1.5">${lowIssues.map(i => `<div class="text-xs"><span class="font-medium text-blue-800">${i.title}</span>${i.description ? `<p class="text-blue-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>` : ''}
+            ${suggestions.length > 0 ? `<div class="border border-gray-200 rounded-lg p-2.5 bg-gray-50"><div class="text-xs font-semibold text-gray-700 mb-1.5">💡 建议 (${suggestions.length})</div><div class="space-y-1">${suggestions.map((s:string,i:number) => `<div class="text-xs text-gray-600 flex items-start gap-1"><span class="text-blue-500 flex-shrink-0">${i+1}.</span><span>${s}</span></div>`).join('')}</div></div>` : ''}
+          </div>
         </div>
       </div>
     `;
@@ -1162,20 +1196,23 @@ export class ReviewAssistant {
             </div>
             <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
               <div class="flex items-center gap-2 mb-3"><span class="text-sm">🎯</span><h3 class="text-sm font-semibold text-gray-900">审核依据配置</h3><span class="text-xs text-gray-400">— 按模块设定额外约束</span></div>
-              <p class="text-xs text-gray-500 mb-3">管理员可为每个模块配置审核依据：上传范文让 AI 对照排查差异，或通过文字规则约束格式合规性。配置后，该模块审核时自动附加对应约束。</p>
+              <p class="text-xs text-gray-500 mb-3">管理员可为每个模块配置审核依据：<b>智能</b>模式自动检索知识库+联网搜索（知识库优先）；上传范文让 AI 对照排查差异；或通过文字规则约束格式合规性。配置后，该模块审核时自动附加对应约束。</p>
               <div class="space-y-3">
                 ${Object.entries(REVIEW_TYPES).filter(([k])=>k!=='comprehensive').map(([key,config])=>{
                   const mc = this.moduleConstraints[key] || { mode: 'none' as const };
                   return `
                   <div class="border rounded-lg p-2.5">
                     <div class="flex items-center gap-1.5 mb-2"><span>${config.icon}</span><span class="text-xs font-medium">${config.label}</span>
-                      ${mc.mode !== 'none' ? `<span class="text-xs px-1.5 py-0.5 rounded ${mc.mode==='reference'?'bg-purple-50 text-purple-600':'bg-amber-50 text-amber-600'}">${mc.mode==='reference'?'范文对比':'文字约束'}</span>` : `<span class="text-xs text-gray-400">未配置</span>`}
+                      ${mc.mode !== 'none' && mc.mode !== 'smart' ? `<span class="text-xs px-1.5 py-0.5 rounded ${mc.mode==='reference'?'bg-purple-50 text-purple-600':'bg-amber-50 text-amber-600'}">${mc.mode==='reference'?'范文对比':'文字约束'}</span>` : `<span class="text-xs text-green-600">🧠 智能检索</span>`}
                     </div>
                     <div class="flex gap-1 mb-1.5">
-                      <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='none'?'border-gray-300 bg-gray-50 text-gray-600':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="none">无</button>
+                      <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='smart'||mc.mode==='none'?'border-green-400 bg-green-50 text-green-700':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="smart">🧠 智能</button>
                       <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='reference'?'border-purple-400 bg-purple-50 text-purple-600':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="reference">📁 范文对比</button>
                       <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='rules'?'border-amber-400 bg-amber-50 text-amber-600':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="rules">📝 文字约束</button>
                     </div>
+                    ${mc.mode==='smart'?`
+                      <div class="text-xs text-green-600 bg-green-50 rounded p-1.5 flex items-center gap-1.5"><span>🧠</span><span>自动检索知识库，知识库不足时联网搜索补全，知识库优先级最高</span></div>
+                    `:''}
                     ${mc.mode==='reference'?`
                       <div class="mc-ref-zone" data-mcmodule="${key}">
                         <div class="border-2 border-dashed border-purple-300 rounded-lg p-2 text-center hover:border-purple-400 transition-colors cursor-pointer bg-purple-50/30 mc-file-drop" data-mcmodule="${key}">
@@ -1335,7 +1372,7 @@ export class ReviewAssistant {
       const module = (btn as HTMLElement).dataset.mcmodule as string;
       const mode = (btn as HTMLElement).dataset.mcmode as 'none' | 'reference' | 'rules';
       if (module && mode) {
-        if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'none' };
+        if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'smart' };
         this.moduleConstraints[module].mode = mode;
         this.render();
       }
