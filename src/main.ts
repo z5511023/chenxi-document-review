@@ -157,12 +157,24 @@ export class ReviewAssistant {
   }
 
   /** 上传文件到后端解析（PDF/Word/图片等） */
+  private async fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 120000): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      return response;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private async uploadAndParseFiles(): Promise<{ name: string; content: string }[]> {
     const formData = new FormData();
     for (const f of this.files) {
       formData.append('files', f.file, f.name);
     }
-    const response = await fetch('/api/parse-file', { method: 'POST', body: formData });
+    const response = await this.fetchWithTimeout('/api/parse-file', { method: 'POST', body: formData }, 60000);
+    if (!response.ok) throw new Error(`文件上传失败 (HTTP ${response.status})`);
     const data = await response.json();
     if (data.success && data.files) return data.files;
     throw new Error(data.error || '文件解析失败');
@@ -178,10 +190,10 @@ export class ReviewAssistant {
       this.originalFileContent = combinedContent;
 
       // 第二步：提交审核
-      const response = await fetch('/api/review', {
+      const response = await this.fetchWithTimeout('/api/review', {
         method: 'POST', headers: this.authHeaders(),
         body: JSON.stringify({ fileName: fileContents.map(f=>f.name).join(', '), fileContent: combinedContent, reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role }),
-      });
+      }, 120000);
       const data = await response.json();
       if (data.success && data.result) {
         this.currentReview = { id: data.id, file_name: data.fileName, review_type: data.reviewType, review_mode: data.reviewMode, user_role: this.role, status: 'completed', result: data.result, created_at: new Date().toISOString() };
