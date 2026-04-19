@@ -1068,14 +1068,12 @@ export class ReviewAssistant {
 		          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='comparison'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="comparison">📋 对比标注</button>
 		          ${(result.issues && result.issues.length > 0) ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='issues'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="issues">问题 (${result.issues.length})</button>` : ''}
 		          ${result.details ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='details'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="details">分析</button>` : ''}
-		          ${(result.suggestions && result.suggestions.length > 0) ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='suggestions'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="suggestions">建议 (${result.suggestions.length})</button>` : ''}
 		          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='references'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="references">来源</button>
         </div>
         <div class="flex-1 overflow-y-auto p-4">
           <div id="tab-comparison" class="tab-content ${this.resultTab==='comparison'?'':'hidden'}">${this.renderComparisonView(result)}</div>
           <div id="tab-issues" class="tab-content ${this.resultTab==='issues'?'':'hidden'}">${!result.issues||result.issues.length===0?'<div class="text-center py-10 text-gray-500"><div class="text-3xl mb-2">✨</div><p class="text-sm">未发现问题</p></div>':`<div class="space-y-3">${result.issues.map(i=>this.renderIssue(i)).join('')}</div>`}</div>
           <div id="tab-details" class="tab-content ${this.resultTab==='details'?'':'hidden'}"><div class="bg-gray-50 rounded-lg p-3 text-sm text-gray-700 whitespace-pre-wrap">${result.details||'暂无详细分析'}</div></div>
-          <div id="tab-suggestions" class="tab-content ${this.resultTab==='suggestions'?'':'hidden'}"><div class="space-y-2">${(result.suggestions||[]).map((s:string,i:number)=>`<div class="flex items-start gap-2 p-2.5 bg-blue-50 rounded-lg"><span class="w-5 h-5 bg-blue-600 rounded-full text-white text-xs flex items-center justify-center flex-shrink-0">${i+1}</span><p class="text-sm text-gray-700">${s}</p></div>`).join('')}</div></div>
           <div id="tab-references" class="tab-content ${this.resultTab==='references'?'':'hidden'}">${this.renderReferencesTab(result)}</div>
         </div>
       </div>
@@ -1085,20 +1083,19 @@ export class ReviewAssistant {
   private renderComparisonView(result: ReviewResult): string {
     const annotated = result.annotatedContent || '';
     const issues = result.issues || [];
-    const suggestions = result.suggestions || [];
     
     if (!annotated && issues.length === 0) {
       return `<div class="text-center py-10 text-gray-500"><div class="text-3xl mb-2">📋</div><p class="text-sm">无审核标注数据</p></div>`;
     }
 
-    // 高亮标注内容
+    // 高亮标注内容（左侧原文标注）
     const highlighted = annotated
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       .replace(/【🔴错别字：应改为"([^"]+)"】/g, '<mark class="bg-red-300 text-red-900 px-1 rounded font-bold border-b-2 border-red-500" title="错别字">🔴 应为"$1"</mark>')
-      .replace(/【❌过期规范：([^】]+)】/g, '<mark class="bg-purple-200 text-purple-900 px-1 rounded font-bold border-b-2 border-purple-500">⚠️ 过期规范：$1</mark>')
-      .replace(/【❌参数不合规：([^】]+)】/g, '<mark class="bg-orange-200 text-orange-900 px-1 rounded font-bold border-b-2 border-orange-500">❌ 参数不合规：$1</mark>')
+      .replace(/【❌过期规范：([^】]+)】/g, '<mark class="bg-purple-200 text-purple-900 px-1 rounded font-bold border-b-2 border-purple-500">📜 $1</mark>')
+      .replace(/【❌参数不合规：([^】]+)】/g, '<mark class="bg-orange-200 text-orange-900 px-1 rounded font-bold border-b-2 border-orange-500">⛔ $1</mark>')
       .replace(/【❌问题：([^】]+)】/g, '<mark class="bg-red-200 text-red-800 px-1 rounded font-medium">❌ $1</mark>')
-      .replace(/【❌格式错误：([^】]+)】/g, '<mark class="bg-red-200 text-red-800 px-1 rounded font-medium">❌ $1</mark>')
+      .replace(/【❌格式错误：([^】]+)】/g, '<mark class="bg-red-200 text-red-800 px-1 rounded font-medium">📐 $1</mark>')
       .replace(/【⚠️提醒：([^】]+)】/g, '<mark class="bg-yellow-200 text-yellow-800 px-1 rounded font-medium">⚠️ $1</mark>')
       .replace(/\n/g,'<br/>');
 
@@ -1114,54 +1111,148 @@ export class ReviewAssistant {
         </div>`
       : '';
 
-    // 结论样式
-    const conclusionMap: Record<string, {text:string;icon:string;bg:string;badge:string}> = {
-      pass: {text:'通过',icon:'✅',bg:'bg-green-50 border-green-200',badge:'bg-green-100 text-green-700'},
-      warning: {text:'需关注',icon:'⚠️',bg:'bg-yellow-50 border-yellow-200',badge:'bg-yellow-100 text-yellow-700'},
-      fail: {text:'需整改',icon:'🔴',bg:'bg-red-50 border-red-200',badge:'bg-red-100 text-red-700'},
+    // === 右侧：按分类展示问题列表（参考范文格式） ===
+    const categoryConfig: Record<string, {icon: string; title: string; sectionClass: string; headerClass: string; itemBorder: string; itemBg: string}> = {
+      format: {icon: '📐', title: '格式错误', sectionClass: 'border-red-200 bg-red-50/30', headerClass: 'text-red-800 bg-red-100', itemBorder: 'border-red-100', itemBg: 'bg-white'},
+      typo: {icon: '✏️', title: '错别字与表述错误', sectionClass: 'border-orange-200 bg-orange-50/30', headerClass: 'text-orange-800 bg-orange-100', itemBorder: 'border-orange-100', itemBg: 'bg-white'},
+      outdated_standard: {icon: '📜', title: '过期规范引用', sectionClass: 'border-purple-200 bg-purple-50/30', headerClass: 'text-purple-800 bg-purple-100', itemBorder: 'border-purple-100', itemBg: 'bg-white'},
+      non_compliant: {icon: '⛔', title: '技术参数不合规', sectionClass: 'border-red-300 bg-red-50/30', headerClass: 'text-red-800 bg-red-100', itemBorder: 'border-red-100', itemBg: 'bg-white'},
+      missing: {icon: '❗', title: '内容缺失', sectionClass: 'border-amber-200 bg-amber-50/30', headerClass: 'text-amber-800 bg-amber-100', itemBorder: 'border-amber-100', itemBg: 'bg-white'},
+      other: {icon: '⚠️', title: '其他问题', sectionClass: 'border-yellow-200 bg-yellow-50/30', headerClass: 'text-yellow-800 bg-yellow-100', itemBorder: 'border-yellow-100', itemBg: 'bg-white'},
     };
-    const conclusion = conclusionMap[result.conclusion || 'warning'] || conclusionMap.warning;
 
-    // 问题列表按类别分组（优先），再按级别
-    const categoryLabels: Record<string, {icon: string; label: string; color: string; bg: string; border: string}> = {
-      format: {icon: '📐', label: '格式错误', color: 'text-red-800', bg: 'bg-red-50/50', border: 'border-red-200'},
-      typo: {icon: '✏️', label: '错别字', color: 'text-orange-800', bg: 'bg-orange-50/50', border: 'border-orange-200'},
-      outdated_standard: {icon: '📜', label: '过期规范', color: 'text-purple-800', bg: 'bg-purple-50/50', border: 'border-purple-200'},
-      non_compliant: {icon: '⛔', label: '参数不合规', color: 'text-red-800', bg: 'bg-red-50/50', border: 'border-red-300'},
-      missing: {icon: '❗', label: '内容缺失', color: 'text-amber-800', bg: 'bg-amber-50/50', border: 'border-amber-200'},
-      other: {icon: '⚠️', label: '其他问题', color: 'text-yellow-800', bg: 'bg-yellow-50/50', border: 'border-yellow-200'},
-    };
-    
     // 按类别分组
     const categorizedIssues: Record<string, Issue[]> = {};
     const uncategorized: Issue[] = [];
     for (const issue of issues) {
       const cat = issue.category || '';
-      if (cat && categoryLabels[cat]) {
+      if (cat && categoryConfig[cat]) {
         if (!categorizedIssues[cat]) categorizedIssues[cat] = [];
         categorizedIssues[cat].push(issue);
       } else {
         uncategorized.push(issue);
       }
     }
+
+    // 渲染单个问题条目（参考范文格式：页码+位置+描述+正确内容）
+    const renderIssueItem = (issue: Issue): string => {
+      const cc = categoryConfig[issue.category || 'other'] || categoryConfig.other;
+      const location = issue.location ? `<span class="inline-flex items-center gap-0.5 text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded font-medium text-xs whitespace-nowrap">📄${issue.location}</span>` : '';
+      let titleHtml = `<span class="font-medium text-gray-900">${issue.title}</span>`;
+      
+      // 根据 category 渲染不同格式的 description
+      let descHtml = '';
+      if (issue.description) {
+        const d = issue.description;
+        let formatted = false;
+        
+        // 过期规范：包含"现行替代"关键字
+        if (issue.category === 'outdated_standard') {
+          const m1 = d.match(/现行替代(?:规范)?[为：:\s]*([^，,]+)/);
+          const m2 = d.match(/实施(?:时间|日期)[：:\s]*(\S+)/);
+          if (m1) {
+            descHtml = `<div class="flex flex-col gap-0.5 mt-1 ml-4 text-xs"><span class="text-purple-700">✅ 现行替代：${m1[1]}${m2 ? '（实施：' + m2[1] + '）' : ''}</span></div>`;
+            formatted = true;
+          }
+        }
+        
+        // 参数不合规：包含"正确值"关键字
+        if (!formatted && issue.category === 'non_compliant') {
+          const m1 = d.match(/依据([^，,]+?)[，,]\s*([^，,]+?)正确值[为：:\s]*(.+)/);
+          const m2 = d.match(/正确值[为：:\s]*(.+)/);
+          if (m1) {
+            descHtml = `<div class="flex flex-col gap-0.5 mt-1 ml-4 text-xs"><span class="text-gray-500">📋 依据：${m1[1]}</span><span class="text-green-700">✅ 正确值：${m1[3]}</span></div>`;
+            formatted = true;
+          } else if (m2) {
+            descHtml = `<div class="mt-1 ml-4 text-xs text-green-700">✅ 正确值：${m2[1]}</div>`;
+            formatted = true;
+          }
+        }
+        
+        // 错别字：title 包含 →
+        if (!formatted && issue.category === 'typo' && issue.title.includes('→')) {
+          const parts = issue.title.split('→');
+          if (parts.length === 2) {
+            descHtml = `<div class="flex items-center gap-2 mt-1 ml-4 text-xs"><span class="text-red-600 bg-red-50 px-1.5 py-0.5 rounded">❌ ${parts[0].replace('错别字：','')}</span><span class="text-gray-400">→</span><span class="text-green-700 bg-green-50 px-1.5 py-0.5 rounded">✅ ${parts[1]}</span></div>`;
+            formatted = true;
+          }
+        }
+
+        // 通用格式：尝试提取"错误/正确"对
+        if (!formatted) {
+          const errMatch = d.match(/错误[内容]?(?:位置)?[：:]\s*([^，,；;]+)/);
+          const corMatch = d.match(/正确[内容]?[：:]\s*([^，,；;]+)/);
+          if (errMatch && corMatch) {
+            descHtml = `<div class="flex flex-col gap-0.5 mt-1 ml-4 text-xs"><span class="text-red-600">❌ ${errMatch[1]}</span><span class="text-green-700">✅ ${corMatch[1]}</span></div>`;
+            formatted = true;
+          }
+        }
+        
+        // 兜底：直接显示 description
+        if (!formatted) {
+          descHtml = `<p class="text-gray-600 mt-0.5 ml-4 text-xs leading-relaxed">${d}</p>`;
+        }
+      }
+
+      return `<div class="border ${cc.itemBorder} rounded-lg p-2 ${cc.itemBg} hover:shadow-sm transition-shadow">
+        <div class="flex items-start gap-1.5 flex-wrap">
+          ${location}
+          ${titleHtml}
+        </div>
+        ${descHtml}
+        ${issue.suggestion ? `<p class="text-xs text-blue-600 mt-1 ml-4">💡 ${issue.suggestion}</p>` : ''}
+      </div>`;
+    };
+
+    // 渲染分类区块
+    let rightPanelHtml = '';
     
-    // 优先展示类别分组，然后按级别展示未分类的
-    let issuesHtml = '';
-    for (const [cat, catIssues] of Object.entries(categorizedIssues)) {
-      const cl = categoryLabels[cat];
-      issuesHtml += `<div class="border ${cl.border} rounded-lg p-2.5 ${cl.bg}"><div class="text-xs font-semibold ${cl.color} mb-1.5">${cl.icon} ${cl.label} (${catIssues.length})</div><div class="space-y-1.5">${catIssues.map(i => {
-        const levelBadge = i.level === 'high' ? '<span class="text-red-600 font-bold">🔴</span>' : i.level === 'medium' ? '<span class="text-yellow-600">⚠️</span>' : '<span class="text-blue-600">💡</span>';
-        return `<div class="text-xs">${levelBadge} <span class="font-medium ${cl.color}">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-gray-600 mt-0.5 ml-5">${i.description}</p>` : ''}</div>`;
-      }).join('')}</div></div>`;
+    // 总结统计
+    const stats = [
+      {label: '格式错误', count: categorizedIssues.format?.length || 0, color: 'text-red-700 bg-red-50'},
+      {label: '错别字', count: categorizedIssues.typo?.length || 0, color: 'text-orange-700 bg-orange-50'},
+      {label: '过期规范', count: categorizedIssues.outdated_standard?.length || 0, color: 'text-purple-700 bg-purple-50'},
+      {label: '参数不合规', count: categorizedIssues.non_compliant?.length || 0, color: 'text-red-700 bg-red-50'},
+      {label: '内容缺失', count: categorizedIssues.missing?.length || 0, color: 'text-amber-700 bg-amber-50'},
+    ].filter(s => s.count > 0);
+
+    if (stats.length > 0) {
+      rightPanelHtml += `<div class="flex items-center gap-2 flex-wrap mb-3">${stats.map(s => `<span class="text-xs px-2 py-1 rounded-full font-medium ${s.color}">${s.label} ${s.count}</span>`).join('')}</div>`;
     }
-    // 未分类的按级别展示
+
+    // 按分类渲染问题（参考范文格式）
+    const categoryOrder = ['format', 'typo', 'outdated_standard', 'non_compliant', 'missing', 'other'];
+    for (const cat of categoryOrder) {
+      if (!categorizedIssues[cat] || categorizedIssues[cat].length === 0) continue;
+      const cc = categoryConfig[cat];
+      const catIssues = categorizedIssues[cat];
+      rightPanelHtml += `
+        <div class="border ${cc.sectionClass} rounded-xl overflow-hidden mb-3">
+          <div class="px-3 py-2 ${cc.headerClass} font-semibold text-sm flex items-center gap-2">
+            <span>${cc.icon}</span><span>${cc.title}</span><span class="opacity-70">(${catIssues.length})</span>
+          </div>
+          <div class="p-2.5 space-y-1.5">
+            ${catIssues.map(i => renderIssueItem(i)).join('')}
+          </div>
+        </div>`;
+    }
+
+    // 未分类的问题
     if (uncategorized.length > 0) {
-      const highIssues = uncategorized.filter(i => i.level === 'high');
-      const mediumIssues = uncategorized.filter(i => i.level === 'medium');
-      const lowIssues = uncategorized.filter(i => i.level === 'low');
-      if (highIssues.length > 0) issuesHtml += `<div class="border border-red-200 rounded-lg p-2.5 bg-red-50/50"><div class="text-xs font-semibold text-red-700 mb-1.5">🔴 严重 (${highIssues.length})</div><div class="space-y-1.5">${highIssues.map(i => `<div class="text-xs"><span class="font-medium text-red-800">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-red-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>`;
-      if (mediumIssues.length > 0) issuesHtml += `<div class="border border-yellow-200 rounded-lg p-2.5 bg-yellow-50/50"><div class="text-xs font-semibold text-yellow-700 mb-1.5">⚠️ 中等 (${mediumIssues.length})</div><div class="space-y-1.5">${mediumIssues.map(i => `<div class="text-xs"><span class="font-medium text-yellow-800">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-yellow-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>`;
-      if (lowIssues.length > 0) issuesHtml += `<div class="border border-blue-200 rounded-lg p-2.5 bg-blue-50/50"><div class="text-xs font-semibold text-blue-700 mb-1.5">💡 轻微 (${lowIssues.length})</div><div class="space-y-1.5">${lowIssues.map(i => `<div class="text-xs"><span class="font-medium text-blue-800">${i.title}</span>${i.location ? `<span class="ml-1 text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-xs font-medium">📍${i.location}</span>` : ''}${i.description ? `<p class="text-blue-600 mt-0.5">${i.description}</p>` : ''}</div>`).join('')}</div></div>`;
+      rightPanelHtml += `
+        <div class="border border-gray-200 rounded-xl overflow-hidden mb-3">
+          <div class="px-3 py-2 bg-gray-100 text-gray-800 font-semibold text-sm flex items-center gap-2">
+            <span>⚠️</span><span>其他问题</span><span class="opacity-70">(${uncategorized.length})</span>
+          </div>
+          <div class="p-2.5 space-y-1.5">
+            ${uncategorized.map(i => renderIssueItem(i)).join('')}
+          </div>
+        </div>`;
+    }
+
+    // 如果没有问题
+    if (issues.length === 0 && annotated) {
+      rightPanelHtml = `<div class="text-center py-8 text-gray-500"><div class="text-3xl mb-2">✅</div><p class="text-sm font-medium">未发现明显问题</p><p class="text-xs mt-1">建议使用"详细审核"模式进行更深入检查</p></div>`;
     }
 
     return `
@@ -1182,23 +1273,14 @@ export class ReviewAssistant {
         <div class="col-span-2">
           <div class="text-xs font-semibold text-gray-700 mb-1.5">📋 审查结果</div>
           <div class="space-y-2.5 max-h-[500px] overflow-y-auto">
-            <!-- 结论卡片 -->
-            <div class="border rounded-lg p-3 ${conclusion.bg}">
-              <div class="flex items-center gap-2 mb-1">
-                <span class="text-lg">${conclusion.icon}</span>
-                <span class="text-sm font-bold ${conclusion.badge} px-2 py-0.5 rounded">${conclusion.text}</span>
-                <span class="text-sm font-bold ${result.score>=80?'text-green-600':result.score>=60?'text-yellow-600':'text-red-600'}">${result.score || '--'}分</span>
-              </div>
-            </div>
-            ${issuesHtml}
-            ${suggestions.length > 0 ? `<div class="border border-gray-200 rounded-lg p-2.5 bg-gray-50"><div class="text-xs font-semibold text-gray-700 mb-1.5">💡 建议 (${suggestions.length})</div><div class="space-y-1">${suggestions.map((s:string,i:number) => `<div class="text-xs text-gray-600 flex items-start gap-1"><span class="text-blue-500 flex-shrink-0">${i+1}.</span><span>${s}</span></div>`).join('')}</div></div>` : ''}
+            ${rightPanelHtml}
           </div>
         </div>
       </div>
     `;
   }
 
-  private renderKnowledgeSourceBadges(): string {
+    private renderKnowledgeSourceBadges(): string {
     if (!this.reviewMeta) return '';
     const badges: string[] = [];
     if (this.reviewMeta.knowledgeUsed) badges.push(`<span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">📚 ${this.reviewMeta.knowledgeChunks||0}条</span>`);
@@ -1548,7 +1630,13 @@ export class ReviewAssistant {
       const review = this.currentReview; const result = review?.result; if(!result) return;
       const dsNames = this.reviewMeta?.knowledgeDatasets||[];
       const sourceStr = [this.reviewMeta?.knowledgeUsed?`知识库(${dsNames.join(',')})`:'',this.reviewMeta?.webSearchUsed?'联网搜索':''].filter(Boolean).join(' + ')||'AI';
-      const report = `辰溪工程文件审核助手 - 审核报告\n========================================\n\n审核类型：${REVIEW_TYPES[review!.review_type as ReviewType]?.label}\n审核模式：${REVIEW_MODES[review!.review_mode as ReviewMode]?.label}\n文件名称：${review!.file_name}\n审核时间：${new Date(review!.created_at).toLocaleString('zh-CN')}\n知识来源：${sourceStr}\n\n审核结论：${result.conclusion==='pass'?'通过':result.conclusion==='fail'?'未通过':'需整改'}\n综合评分：${result.score}/100\n\n问题清单\n--------\n${!result.issues||result.issues.length===0?'无':result.issues.map((i,n)=>`${n+1}. [${i.level==='high'?'严重':i.level==='medium'?'中等':'轻微'}] ${i.title}${i.location?' ('+i.location+')':''}\n   ${i.description}\n   建议：${i.suggestion}`).join('\n\n')}\n\n整改建议\n--------\n${(result.suggestions||[]).map((s:string,i:number)=>`${i+1}. ${s}`).join('\n')}\n\n详细分析\n--------\n${result.details}\n\n========================================\n辰溪工程文件审核助手 自动生成`.trim();
+      const catNames: Record<string,string> = {format:'格式错误',typo:'错别字与表述错误',outdated_standard:'过期规范引用',non_compliant:'技术参数不合规',missing:'内容缺失',other:'其他问题'};
+      const issuesByCat: Record<string,typeof result.issues> = {};
+      (result.issues||[]).forEach((i: Issue) => { const c = i.category||'other'; if(!issuesByCat[c]) issuesByCat[c]=[]; issuesByCat[c].push(i); });
+      const catOrder = ['format','typo','outdated_standard','non_compliant','missing','other'];
+      let issueReport = '';
+      for (const cat of catOrder) { if(!issuesByCat[cat]||issuesByCat[cat].length===0) continue; issueReport += `\n${catNames[cat]||cat}（${issuesByCat[cat].length}项）\n${'─'.repeat(30)}\n`; issuesByCat[cat].forEach((i: Issue,n: number) => { issueReport += `${n+1}. ${i.title}${i.location?' ('+i.location+')':''}\n   ${i.description}${i.suggestion?'\n   建议：'+i.suggestion:''}\n`; }); }
+      const report = `辰溪工程文件审核助手 - 审核报告\n========================================\n\n审核类型：${REVIEW_TYPES[review!.review_type as ReviewType]?.label}\n审核模式：${REVIEW_MODES[review!.review_mode as ReviewMode]?.label}\n文件名称：${review!.file_name}\n审核时间：${new Date(review!.created_at).toLocaleString('zh-CN')}\n知识来源：${sourceStr}\n\n审核结论：${result.conclusion==='pass'?'通过':result.conclusion==='fail'?'未通过':'需整改'}\n综合评分：${result.score}/100\n${issueReport||'\n未发现问题\n'}\n========================================\n辰溪工程文件审核助手 自动生成`.trim();
       const blob = new Blob([report],{type:'text/plain;charset=utf-8'}); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href=url; link.download=`审核报告_${new Date().toISOString().slice(0,10)}.txt`; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url);
     });
 
