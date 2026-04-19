@@ -293,15 +293,22 @@ router.post('/api/parse-file', async (req: Request, res: Response) => {
   req.setTimeout(60000);
   res.setTimeout(60000);
 
+  console.log('[parse-file] Request received, content-type:', req.headers['content-type']);
+
   try {
     const form = formidable(FORM_OPTIONS);
+    console.log('[parse-file] Starting form.parse()...');
     const [, files] = await form.parse(req);
+    console.log('[parse-file] form.parse() completed, files:', Object.keys(files));
     const uploadedFiles = files.files; // 前端 FormData 用 'files' 作为字段名
 
     if (!uploadedFiles || uploadedFiles.length === 0) {
+      console.log('[parse-file] No files found in upload');
       res.status(400).json({ error: '未上传文件' });
       return;
     }
+
+    console.log('[parse-file] Files received:', uploadedFiles.map(f => ({ name: f.originalFilename, size: f.size })));
 
     const results: { name: string; content: string; pages?: number }[] = [];
     const tmpFiles: string[] = [];

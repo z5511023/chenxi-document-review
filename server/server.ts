@@ -14,20 +14,20 @@ const app = express();
 const server = createServer(app);
 
 async function startServer(): Promise<Server> {
-  // 添加请求体解析
+  // 请求日志（所有环境都记录 API 请求）
+  app.use((req, _res, next) => {
+    if (req.url.startsWith('/api/')) {
+      console.log(`[${new Date().toISOString()}] >>> ${req.method} ${req.url} content-type=${req.headers['content-type'] || 'none'}`);
+    }
+    next();
+  });
+
+  // 添加请求体解析（仅处理 json 和 urlencoded，不处理 multipart）
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   // 注册 API 路由
   app.use(router);
-
-  // 请求日志（仅开发环境）
-  if (isDev) {
-    app.use((req, _res, next) => {
-      console.log(`${req.method} ${req.url}`);
-      next();
-    });
-  }
 
   // 集成 Vite（开发模式）或静态文件服务（生产模式）
   await setupVite(app);
