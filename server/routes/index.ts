@@ -129,12 +129,45 @@ const REVIEW_PROMPTS: Record<string, string> = {
 以JSON格式返回审核结果，包含annotatedContent字段。`,
 };
 
-// 给所有提示词加上错别字检测指令
+// 给所有提示词加上错别字检测指令 + annotatedContent强化指令
+const ANNOTATED_CONTENT_INSTRUCTION = `
+
+【关键 - annotatedContent 标注要求】
+annotatedContent 是最重要的输出字段，必须严格按要求生成：
+1. 将原文完整返回（不要省略任何内容）
+2. 在原文中找到每个问题/错别字的位置，用以下标记插入原文：
+   - 错别字标注：【🔴错别字：应改为"正确字"】（紧跟在错别字后面）
+   - 严重问题标注：【❌问题：问题描述】（紧跟在问题文字后面）
+   - 提醒注意标注：【⚠️提醒：提醒内容】（紧跟在需注意的文字后面）
+3. 绝对不能只返回原始文本而不加任何标注！
+4. 绝对不能省略原文内容！
+5. 每个issue都必须在annotatedContent中有对应的标注
+6. 示例：原文"施工人员因按照规定佩戴安全帽"→ annotatedContent:"施工人员因【🔴错别字：应改为"应"】按照规定佩戴安全帽"`;
+
 Object.keys(REVIEW_PROMPTS).forEach((key) => {
   REVIEW_PROMPTS[key] += TYPO_CHECK_INSTRUCTION;
+  REVIEW_PROMPTS[key] += ANNOTATED_CONTENT_INSTRUCTION;
 });
 
+
 // ==================== 分段审核辅助函数 ====================
+
+/**
+ * 归一化文本中的 CJK 字符间空格
+ * PDF 提取的文本常有 "方 案 报 审 表" → "方案报审表"
+ */
+function normalizeCJKSpaces(text: string): string {
+  const CJK = '[\\u4e00-\\u9fff\\u3400-\\u4dbf\\uf900-\\ufaff]';
+  let prev = '';
+  let result = text;
+  let rounds = 0;
+  while (prev !== result && rounds < 5) {
+    prev = result;
+    result = result.replace(new RegExp(`(${CJK})\\s+(${CJK})`, 'g'), '$1$2');
+    rounds++;
+  }
+  return result;
+}
 
 /**
  * 智能跳过报审单和目录，保留全部正文
@@ -159,16 +192,21 @@ function skipApprovalAndTOC(content: string): { skipped: string; body: string } 
     const fileName = fileMatch ? fileMatch[1] : '';
     const fileContent = fileMatch ? fileMatch[2] : section;
 
-    // 如果整个 section 是报审单（文件名包含报审，或内容以报审开头）
-    if (approvalKeywords.some(kw => fileName.includes(kw) || fileContent.substring(0, 200).includes(kw))) {
+    // 归一化空格后的内容，用于关键词匹配（PDF 常有 "方 案 报 审 表" 这种字间空格）
+    const normalizedContent = normalizeCJKSpaces(fileContent.substring(0, 500));
+
+    // 如果整个 section 是报审单（文件名包含报审，或归一化后的内容以报审开头）
+    if (approvalKeywords.some(kw => fileName.includes(kw) || normalizedContent.includes(kw))) {
       // 尝试只跳过报审单部分，保留后续正文
       const lines = fileContent.split('\n');
       let approvalEnd = 0;
       let foundApproval = false;
-      for (let i = 0; i < Math.min(lines.length, 50); i++) {
-        if (approvalKeywords.some(kw => lines[i].includes(kw))) foundApproval = true;
-        // 报审单通常在第一个章节标题之前结束（如 "一、" "1." "第一章" "1.1" 等）
-        if (foundApproval && /^(第[一二三四五六七八九十]+[章节]|[一二三四五六七八九十]+[、.]\s|第?\d+[\.、]\s|\d+\.\d+\s)/.test(lines[i].trim())) {
+      for (let i = 0; i < Math.min(lines.length, 80); i++) {
+        const normalizedLine = normalizeCJKSpaces(lines[i]);
+        if (approvalKeywords.some(kw => normalizedLine.includes(kw))) foundApproval = true;
+        // 报审单通常在第一个章节标题之前结束（如 "一、" "1." "第一章" 等）
+        // 同时支持 PDF 提取的带空格版本："1.  工程概况" "第 一 章" 等
+        if (foundApproval && /^(第[一二三四五六七八九十]+[章节]|[一二三四五六七八九十]+[、.]\s|第?\d+[\.、]\s|\d+\.\d+\s|\d+\s+[^\d.])/i.test(normalizedLine.trim())) {
           approvalEnd = i;
           break;
         }
@@ -189,14 +227,15 @@ function skipApprovalAndTOC(content: string): { skipped: string; body: string } 
     let tocEnd = -1;
 
     for (let i = 0; i < Math.min(lines.length, 100); i++) {
-      if (tocKeywords.some(kw => lines[i].trim() === kw || lines[i].trim().startsWith(kw))) {
+      const normalizedLine = normalizeCJKSpaces(lines[i].trim());
+      if (tocKeywords.some(kw => normalizedLine === kw || normalizedLine.startsWith(kw))) {
         tocStart = i;
       }
       if (tocStart >= 0 && tocEnd < 0) {
         // 目录结束：遇到第一个章节标题（如"1 xxx" "一、xxx" "第一章 xxx"）
-        if (i > tocStart && /^(第[一二三四五六七八九十]+[章节]|[一二三四五六七八九十]+[、.]\s*[^、.]|\d+\s+[^\d.])/i.test(lines[i].trim())) {
+        if (i > tocStart && /^(第[一二三四五六七八九十]+[章节]|[一二三四五六七八九十]+[、.]\s*[^、.]|\d+\s+[^\d.])/i.test(normalizedLine)) {
           // 确认这不是目录行（目录行通常有页码或"......"）
-          if (!lines[i].includes('...') && !/\d+\s*$/.test(lines[i].trim().replace(/\s+/g, ' '))) {
+          if (!normalizedLine.includes('...') && !/\d+\s*$/.test(normalizedLine.replace(/\s+/g, ' '))) {
             tocEnd = i;
             break;
           }
@@ -862,6 +901,7 @@ router.delete('/api/users/:id', requireAdmin, async (req: Request, res: Response
 	      : '\n\n详细审核模式，全面深入审核，必须包含annotatedContent。';
 	    baseSystemPrompt += contextSection;
 
+
 	    // ====== 分段审核策略 ======
 	    // 1. 智能跳过报审单/目录，保留所有正文
 	    // 2. 正文按章节拆分为多段（每段不超过 CHUNK_SIZE 字符）
@@ -872,6 +912,35 @@ router.delete('/api/users/:id', requireAdmin, async (req: Request, res: Response
 
 	    // 智能识别并跳过报审单/目录，保留全部正文
 	    const { skipped, body } = skipApprovalAndTOC(fileContent);
+
+    // 添加审核依据（范文对比/文字约束）
+    const reqBody = req.body as Record<string, unknown>;
+    const constraintMode = reqBody.constraintMode as string | undefined;
+    const constraintContent = reqBody.constraintContent as string | undefined;
+    if (constraintMode && constraintContent) {
+      if (constraintMode === 'reference') {
+        const constraintFileName = (reqBody.constraintFileName as string) || '范文';
+        const refText = constraintContent.substring(0, 5000);
+        baseSystemPrompt += `
+
+【审核依据 - 范文对比】
+请将以下范文作为参考标准，对照检查待审文件与范文的差异，包括但不限于：
+- 内容结构差异（是否缺少章节、条款）
+- 格式规范差异（如标题格式、编号方式）
+- 表述习惯差异（如术语使用、句式结构）
+- 关键技术参数差异
+
+范文名称：${constraintFileName}
+范文内容（前5000字）：
+${refText}`;
+      } else if (constraintMode === 'rules') {
+        baseSystemPrompt += `
+
+【审核依据 - 文字约束】
+请严格按照以下约束条件审核文件，对不符合约束的地方进行标注：
+${constraintContent}`;
+      }
+    }
 	    console.log(`[分段审核] 原文 ${fileContent.length} 字符，跳过报审单/目录 ${skipped.length} 字符，正文 ${body.length} 字符`);
 
 	    // 按章节拆分正文
@@ -898,7 +967,7 @@ router.delete('/api/users/:id', requireAdmin, async (req: Request, res: Response
 	        const config = new LLMConfig();
 	        const client = new LLMClient(config, customHeaders);
 	        const stream = client.stream(messages, {
-	          model: 'doubao-seed-1-6-lite-251015',
+	          model: 'doubao-seed-2-0-lite-260215',
 	          temperature: reviewMode === 'detailed' ? 0.2 : 0.3,
 	        });
 	        for await (const chunk2 of stream) {
@@ -910,7 +979,7 @@ router.delete('/api/users/:id', requireAdmin, async (req: Request, res: Response
 	          conclusion: 'warning', score: 70,
 	          issues: [{ level: 'medium', title: `第${i + 1}段审核失败`, description: 'AI 服务暂时不可用，请稍后重试' }],
 	          suggestions: ['建议对失败段落重新审核'],
-	          annotatedContent: chunk.content.substring(0, 2000),
+	          annotatedContent: chunk.content,
 	          _segment: i + 1, _segmentTitle: chunk.title, _failed: true,
 	        });
 	        continue;
@@ -919,14 +988,25 @@ router.delete('/api/users/:id', requireAdmin, async (req: Request, res: Response
 	      let segResult: Record<string, unknown>;
 	      try {
 	        const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
-	        segResult = jsonMatch ? JSON.parse(jsonMatch[0]) : {
-	          conclusion: 'warning', score: 70, issues: [], suggestions: ['建议人工复核'],
-	          details: fullContent, annotatedContent: chunk.content.substring(0, 2000),
-	        };
+	        if (!jsonMatch) {
+	          const hasAnnotations = fullContent.includes('\ud83d\udd34') || fullContent.includes('\u274c') || fullContent.includes('\u26a0\ufe0f');
+	          segResult = {
+	            conclusion: 'warning', score: 70, issues: [], suggestions: ['建议人工复核'],
+	            details: fullContent,
+	            annotatedContent: hasAnnotations ? fullContent : chunk.content,
+	          };
+	        } else {
+	          segResult = JSON.parse(jsonMatch[0]);
+	        }
 	      } catch {
-	        segResult = { conclusion: 'warning', score: 70, issues: [], suggestions: ['建议人工复核'], details: fullContent, annotatedContent: chunk.content.substring(0, 2000) };
+	        const hasAnnotations = fullContent.includes('\ud83d\udd34') || fullContent.includes('\u274c') || fullContent.includes('\u26a0\ufe0f');
+	        segResult = {
+	          conclusion: 'warning', score: 70, issues: [], suggestions: ['建议人工复核'],
+	          details: fullContent,
+	          annotatedContent: hasAnnotations ? fullContent : chunk.content,
+	        };
 	      }
-	      if (!segResult.annotatedContent) segResult.annotatedContent = chunk.content.substring(0, 2000);
+	      if (!segResult.annotatedContent) segResult.annotatedContent = chunk.content;
 	      segResult._segment = i + 1;
 	      segResult._segmentTitle = chunk.title;
 	      segmentResults.push(segResult);

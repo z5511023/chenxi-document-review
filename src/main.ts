@@ -54,6 +54,12 @@ export class ReviewAssistant {
   private container!: HTMLElement;
   private activeTab: TabView = 'review';
   private knowledgeEntries: KnowledgeEntry[] = [];
+  private knowledgeFileContent: string = '';
+  private knowledgeFileName: string = '';
+  private constraintMode: 'none' | 'reference' | 'rules' = 'none';
+  private constraintFileContent: string = '';
+  private constraintFileName: string = '';
+  private constraintRules: string = '';
   private isImporting = false;
   private managedUsers: ManagedUser[] = [];
   private reviewMeta: { knowledgeUsed?: boolean; knowledgeChunks?: number; knowledgeDatasets?: string[]; webSearchUsed?: boolean; webSearchResults?: number } | null = null;
@@ -65,6 +71,34 @@ export class ReviewAssistant {
   // 文件预览模式：仅解析文件提取文本，不调用 LLM（零 Token 消耗）
   private previewContent: string | null = null;
   private isPreviewing = false;
+
+  /**
+   * 清理 PDF 提取文本中的 CJK 字符间多余空格
+   * pdf.js 常产生 "方 案 报 审 表" → 应为 "方案报审表"
+   * 规则：当两个 CJK 字符之间仅有空格时，去除空格
+   * 保留 CJK 与非 CJK 之间的空格（如 "第 1 章" 保留）
+   */
+  private normalizePdfText(text: string): string {
+    // CJK Unified Ideographs: \u4e00-\u9fff
+    // CJK Extension A: \u3400-\u4dbf
+    // CJK Compatibility: \uf900-\ufaff
+    const CJK = '[\\u4e00-\\u9fff\\u3400-\\u4dbf\\uf900-\\ufaff]';
+    // 中文字符之间的空格 → 删除
+    const result = text.replace(new RegExp(`(${CJK})\\s+(${CJK})`, 'g'), '$1$2');
+    // 多次替换（处理连续多个CJK字符间空格，如 "方 案 报 审 表"）
+    let prev = '';
+    let cleaned = result;
+    let rounds = 0;
+    while (prev !== cleaned && rounds < 5) {
+      prev = cleaned;
+      cleaned = cleaned.replace(new RegExp(`(${CJK})\\s+(${CJK})`, 'g'), '$1$2');
+      rounds++;
+    }
+    // 清理多余连续空格（非CJK间保留单空格）
+    cleaned = cleaned.replace(/[^\S\n]+/g, ' ').trim();
+    console.log(`[文件解析] PDF文本归一化完成，原文 ${text.length} → 归一化 ${cleaned.length} 字符`);
+    return cleaned;
+  }
 
   /** 显示轻量提示（替代 alert，不打断用户操作） */
   private showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
@@ -271,7 +305,12 @@ export class ReviewAssistant {
             const pageText = textContent.items.map((item: any) => item.str).join(' ');
             textParts.push(pageText);
           }
-          const text = textParts.join('\n\n');
+          let text = textParts.join('\n\n');
+
+          // ✅ 清理CJK字符间多余空格
+          // pdf.js提取的文本常有"方 案 报 审 表"这种字间空格
+          // 规则：当中文字符之间只有空格（无标点/数字/英文）时，合并空格
+          text = this.normalizePdfText(text);
           console.log(`[文件解析] PDF 文本提取完成，总长度 ${text.length} 字符`);
           results.push({ name: f.name, content: text || '[PDF解析结果为空，请将文件内容复制粘贴到下方文本框]' });
         } else if (['doc', 'docx'].includes(ext)) {
@@ -398,12 +437,25 @@ export class ReviewAssistant {
 
       const fileName = hasTextContent ? '粘贴文本内容' : this.files.map(f => f.name).join(', ');
 
+      // 构建审核请求，包含审核依据
+      const reviewBody: Record<string, unknown> = {
+        fileName, fileContent: combinedContent, reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role,
+      };
+      if (this.constraintMode === 'reference' && this.constraintFileContent) {
+        reviewBody.constraintMode = 'reference';
+        reviewBody.constraintContent = this.constraintFileContent;
+        reviewBody.constraintFileName = this.constraintFileName;
+      } else if (this.constraintMode === 'rules' && this.constraintRules.trim()) {
+        reviewBody.constraintMode = 'rules';
+        reviewBody.constraintContent = this.constraintRules.trim();
+      }
+
       // 提交审核
       this.updateLoadingStatus('正在提交审核，AI 分析中（约30秒-2分钟）...');
-      console.log(`[审核] 提交到 /api/review，类型=${this.reviewType}，模式=${this.reviewMode}`);
+      console.log(`[审核] 提交到 /api/review，类型=${this.reviewType}，模式=${this.reviewMode}，依据=${this.constraintMode}`);
       const response = await this.fetchWithTimeout('/api/review', {
         method: 'POST', headers: this.authHeaders(),
-        body: JSON.stringify({ fileName, fileContent: combinedContent, reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role }),
+        body: JSON.stringify(reviewBody),
       }, 120000);
       console.log(`[审核] API 响应状态: ${response.status}`);
       const data = await response.json();
@@ -451,6 +503,81 @@ export class ReviewAssistant {
   // ==================== 知识库管理 ====================
   addKnowledgeEntry(entry: KnowledgeEntry) { this.knowledgeEntries.push(entry); this.render(); }
   removeKnowledgeEntry(id: string) { this.knowledgeEntries = this.knowledgeEntries.filter(e => e.id !== id); this.render(); }
+
+  /** 处理知识库文件上传（前端解析文本，与审核文件解析复用逻辑） */
+  async handleKnowledgeFile(file: File) {
+    const fileInfo = document.getElementById('knowledgeFileInfo');
+    const fileNameEl = document.getElementById('knowledgeFileName');
+    try {
+      let text = '';
+      if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+        const pdfjsLib = await import('pdfjs-dist');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        const parts: string[] = [];
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const tc = await page.getTextContent();
+          parts.push(tc.items.map((item: any) => item.str).join(' '));
+        }
+        text = this.normalizePdfText(parts.join('\n\n'));
+      } else if (file.name.endsWith('.docx') || file.name.endsWith('.doc')) {
+        const JSZip = (await import('jszip')).default;
+        const zip = await JSZip.loadAsync(file);
+        const docXml = await zip.file('word/document.xml')?.async('string');
+        text = docXml ? docXml.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
+      } else {
+        text = await file.text();
+      }
+      if (!text) { alert('文件内容为空或无法解析'); return; }
+      this.knowledgeFileContent = text;
+      this.knowledgeFileName = file.name;
+      if (fileNameEl) fileNameEl.textContent = `${file.name} (${(text.length / 1000).toFixed(1)}k字)`;
+      if (fileInfo) fileInfo.classList.remove('hidden');
+      // 自动设置标题为文件名
+      const titleEl = document.getElementById('knowledgeTitle') as HTMLInputElement;
+      if (titleEl && !titleEl.value) titleEl.value = file.name.replace(/\.[^.]+$/, '');
+    } catch (err) {
+      console.error('[知识库文件解析失败]', err);
+      alert('文件解析失败: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  /** 处理审核依据文件上传（范文对比模式） */
+  async handleConstraintFile(file: File) {
+    try {
+      let text = '';
+      if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+        const pdfjsLib = await import('pdfjs-dist');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+        const parts: string[] = [];
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const tc = await page.getTextContent();
+          parts.push(tc.items.map((item: any) => item.str).join(' '));
+        }
+        text = this.normalizePdfText(parts.join('\n\n'));
+      } else if (file.name.endsWith('.docx') || file.name.endsWith('.doc')) {
+        const JSZip = (await import('jszip')).default;
+        const zip = await JSZip.loadAsync(file);
+        const docXml = await zip.file('word/document.xml')?.async('string');
+        text = docXml ? docXml.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
+      } else {
+        text = await file.text();
+      }
+      if (!text) { alert('文件内容为空或无法解析'); return; }
+      this.constraintFileContent = text.substring(0, 50000); // 范文限制50k字符
+      this.constraintFileName = file.name;
+      this.showToast(`范文已加载: ${file.name}`, 'success');
+      this.render();
+    } catch (err) {
+      console.error('[范文文件解析失败]', err);
+      alert('文件解析失败: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  }
 
   async importKnowledgeToServer() {
     if (this.knowledgeEntries.length === 0) { alert('没有待导入的知识条目'); return; }
@@ -728,6 +855,29 @@ export class ReviewAssistant {
             </div>
           </div>
         </div>
+        <div class="mt-3">
+          <div class="flex items-center gap-1 mb-2">
+            <label class="text-xs font-medium text-gray-700">审核依据（可选）</label>
+            <span class="text-xs text-gray-400">— 额外约束条件</span>
+          </div>
+          <div class="flex gap-1.5 mb-2">
+            <button class="constraint-mode-btn flex-1 p-1.5 rounded border text-center text-xs transition-all ${this.constraintMode==='none'?'border-gray-200 text-gray-400':'border-gray-200 text-gray-500 hover:border-gray-300'}" data-cmode="none">无</button>
+            <button class="constraint-mode-btn flex-1 p-1.5 rounded border text-center text-xs transition-all ${this.constraintMode==='reference'?'border-purple-500 bg-purple-50 ring-1 ring-purple-200 text-purple-700':'border-gray-200 text-gray-500 hover:border-gray-300'}" data-cmode="reference">📁 范文对比</button>
+            <button class="constraint-mode-btn flex-1 p-1.5 rounded border text-center text-xs transition-all ${this.constraintMode==='rules'?'border-purple-500 bg-purple-50 ring-1 ring-purple-200 text-purple-700':'border-gray-200 text-gray-500 hover:border-gray-300'}" data-cmode="rules">📝 文字约束</button>
+          </div>
+          ${this.constraintMode==='reference'?`
+            <div class="border-2 border-dashed border-purple-300 rounded-lg p-3 text-center hover:border-purple-400 transition-colors cursor-pointer bg-purple-50/30" id="constraintFileDropZone">
+              <div class="text-lg mb-1">📁</div>
+              <p class="text-xs text-purple-600">上传范文/标准文件</p>
+              <p class="text-xs text-purple-400">AI 将对照范文检查差异</p>
+              <input type="file" id="constraintFileInput" class="hidden" accept=".pdf,.docx,.doc,.txt,.text" />
+            </div>
+            ${this.constraintFileContent?`<div class="mt-1.5 p-1.5 bg-purple-50 rounded flex items-center gap-1.5"><span class="text-green-600 text-xs">✅</span><span class="text-xs text-purple-700 truncate flex-1">${this.constraintFileName} (${(this.constraintFileContent.length/1000).toFixed(1)}k字)</span><button id="constraintFileClear" class="text-xs text-gray-400 hover:text-red-500">✕</button></div>`:''}
+          `:''}
+          ${this.constraintMode==='rules'?`
+            <textarea id="constraintRules" class="w-full border border-purple-200 rounded-lg p-2 text-xs text-gray-700 resize-none focus:ring-1 focus:ring-purple-300 focus:border-purple-400" rows="3" placeholder="输入约束条件，如：&#10;- 正文应使用仿宋GB2312三号字&#10;- 页边距上下2.54cm，左右3.17cm&#10;- 标题使用黑体二号字">${this.constraintRules}</textarea>
+          `:''}
+        </div>
         <button id="startReviewBtn" class="w-full mt-4 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-lg font-medium hover:from-blue-700 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm" ${this.files.length===0 && this.textContent.trim().length===0?'disabled':''}>
           开始审核 ${this.files.length>0?`(${this.files.length}个文件)`:this.textContent.trim()?'(文本内容)':''}
         </button>
@@ -872,7 +1022,14 @@ export class ReviewAssistant {
     const typoCount = (annotated.match(/🔴错别字/g) || []).length;
     const errorCount = (annotated.match(/【❌/g) || []).length;
     const warnCount = (annotated.match(/【⚠️/g) || []).length;
+    const totalAnnotations = typoCount + errorCount + warnCount;
+    const noAnnotationHint = totalAnnotations === 0
+      ? `<div class="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+          ⚠️ AI 未在文本中发现需标注的问题（错别字/错误/提醒）。如果文件确实存在问题，请尝试使用"详细审核"模式重新审核。
+        </div>`
+      : '';
     return `
+      ${noAnnotationHint}
       <div class="mb-3 flex items-center gap-3 flex-wrap">
         <span class="text-xs font-medium text-gray-700">标注说明：</span>
         <span class="text-xs flex items-center gap-1"><span class="w-2.5 h-2.5 bg-red-300 rounded inline-block border border-red-500"></span> 错别字 (${typoCount})</span>
@@ -882,7 +1039,7 @@ export class ReviewAssistant {
       <div class="grid grid-cols-2 gap-3">
         <div>
           <div class="text-xs font-semibold text-gray-700 mb-1.5">📄 原始文件</div>
-          <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 leading-relaxed max-h-[450px] overflow-y-auto font-mono whitespace-pre-wrap break-all">${originalText.substring(0,5000)}</div>
+          <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-700 leading-relaxed max-h-[450px] overflow-y-auto font-mono whitespace-pre-wrap break-all">${originalText}</div>
         </div>
         <div>
           <div class="text-xs font-semibold text-gray-700 mb-1.5">🔍 AI 标注结果</div>
@@ -941,11 +1098,25 @@ export class ReviewAssistant {
                 <div class="flex gap-1.5">
                   <button class="knowledge-type-btn flex-1 p-2 rounded-lg border text-center transition-all border-blue-500 bg-blue-50 ring-2 ring-blue-200 text-xs" data-ktype="text">📝 文本</button>
                   <button class="knowledge-type-btn flex-1 p-2 rounded-lg border text-center transition-all border-gray-200 hover:border-gray-300 text-xs" data-ktype="url">🔗 链接</button>
+                  <button class="knowledge-type-btn flex-1 p-2 rounded-lg border text-center transition-all border-gray-200 hover:border-gray-300 text-xs" data-ktype="file">📁 文件</button>
                 </div>
               </div>
               <div class="mb-3"><input type="text" id="knowledgeTitle" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs" placeholder="标题" /></div>
               <div id="knowledgeTextInput" class="mb-3"><textarea id="knowledgeContent" rows="4" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs resize-none" placeholder="粘贴内容..."></textarea></div>
               <div id="knowledgeUrlInput" class="mb-3 hidden"><input type="url" id="knowledgeUrl" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs" placeholder="https://..." /></div>
+              <div id="knowledgeFileInput" class="mb-3 hidden">
+                <div class="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-blue-400 transition-colors cursor-pointer" id="knowledgeFileDropZone">
+                  <div class="text-2xl mb-1">📁</div>
+                  <p class="text-xs text-gray-500">拖拽文件到此处或点击选择</p>
+                  <p class="text-xs text-gray-400 mt-1">支持 PDF、Word、TXT</p>
+                  <input type="file" id="knowledgeFileInput_file" class="hidden" accept=".pdf,.docx,.doc,.txt,.text" />
+                </div>
+                <div id="knowledgeFileInfo" class="hidden mt-2 p-2 bg-green-50 rounded-lg flex items-center gap-2">
+                  <span class="text-green-600 text-sm">✅</span>
+                  <span id="knowledgeFileName" class="text-xs text-green-700 flex-1 truncate"></span>
+                  <button id="knowledgeFileClear" class="text-xs text-gray-400 hover:text-red-500">✕</button>
+                </div>
+              </div>
               <button id="addKnowledgeBtn" class="w-full py-2 px-4 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 text-xs">+ 添加</button>
             </div>
             ${this.knowledgeEntries.length>0?`
@@ -1100,6 +1271,40 @@ export class ReviewAssistant {
     document.querySelectorAll('.review-type-btn').forEach(btn => btn.addEventListener('click', () => { const type=(btn as HTMLElement).dataset.type as ReviewType; if(type) this.setReviewType(type); }));
     document.querySelectorAll('.review-mode-btn').forEach(btn => btn.addEventListener('click', () => { const mode=(btn as HTMLElement).dataset.mode as ReviewMode; if(mode) this.setReviewMode(mode); }));
 
+    // 审核依据模式切换
+    document.querySelectorAll('.constraint-mode-btn').forEach(btn => btn.addEventListener('click', () => {
+      const cmode = (btn as HTMLElement).dataset.cmode as 'none' | 'reference' | 'rules';
+      if (cmode) { this.constraintMode = cmode; this.render(); }
+    }));
+
+    // 审核依据文件上传
+    const constraintFileDropZone = document.getElementById('constraintFileDropZone');
+    const constraintFileInput = document.getElementById('constraintFileInput') as HTMLInputElement;
+    if (constraintFileDropZone) {
+      constraintFileDropZone.addEventListener('click', () => constraintFileInput?.click());
+      constraintFileDropZone.addEventListener('dragover', (e: Event) => { e.preventDefault(); (constraintFileDropZone as HTMLElement).classList.add('border-purple-400','bg-purple-100'); });
+      constraintFileDropZone.addEventListener('dragleave', () => { constraintFileDropZone.classList.remove('border-purple-400','bg-purple-100'); });
+      constraintFileDropZone.addEventListener('drop', (e: DragEvent) => {
+        e.preventDefault(); constraintFileDropZone.classList.remove('border-purple-400','bg-purple-100');
+        const file = e.dataTransfer?.files[0];
+        if (file) this.handleConstraintFile(file);
+      });
+    }
+    if (constraintFileInput) {
+      constraintFileInput.addEventListener('change', () => {
+        const file = constraintFileInput.files?.[0];
+        if (file) this.handleConstraintFile(file);
+      });
+    }
+    document.getElementById('constraintFileClear')?.addEventListener('click', () => {
+      this.constraintFileContent = ''; this.constraintFileName = ''; this.render();
+    });
+    // 文字约束保存
+    const constraintRulesEl = document.getElementById('constraintRules') as HTMLTextAreaElement;
+    if (constraintRulesEl) {
+      constraintRulesEl.addEventListener('input', () => { this.constraintRules = constraintRulesEl.value; });
+    }
+
     // 帮助提示切换
     document.querySelectorAll('.help-tip').forEach(el => el.addEventListener('click', () => { document.getElementById('modeHelpTip')?.classList.toggle('hidden'); }));
     document.querySelectorAll('.help-tip-type').forEach(el => el.addEventListener('click', () => { document.getElementById('typeHelpTip')?.classList.toggle('hidden'); }));
@@ -1153,19 +1358,54 @@ export class ReviewAssistant {
       const ktype = (btn as HTMLElement).dataset.ktype;
       document.querySelectorAll('.knowledge-type-btn').forEach(b => { b.classList.remove('border-blue-500','bg-blue-50','ring-2','ring-blue-200'); b.classList.add('border-gray-200'); });
       btn.classList.add('border-blue-500','bg-blue-50','ring-2','ring-blue-200'); btn.classList.remove('border-gray-200');
-      const textInput = document.getElementById('knowledgeTextInput'); const urlInput = document.getElementById('knowledgeUrlInput');
-      if (ktype==='url') { textInput?.classList.add('hidden'); urlInput?.classList.remove('hidden'); } else { textInput?.classList.remove('hidden'); urlInput?.classList.add('hidden'); }
+      const textInput = document.getElementById('knowledgeTextInput'); const urlInput = document.getElementById('knowledgeUrlInput'); const fileInput = document.getElementById('knowledgeFileInput');
+      if (ktype==='url') { textInput?.classList.add('hidden'); urlInput?.classList.remove('hidden'); fileInput?.classList.add('hidden'); }
+      else if (ktype==='file') { textInput?.classList.add('hidden'); urlInput?.classList.add('hidden'); fileInput?.classList.remove('hidden'); }
+      else { textInput?.classList.remove('hidden'); urlInput?.classList.add('hidden'); fileInput?.classList.add('hidden'); }
     }));
     document.getElementById('addKnowledgeBtn')?.addEventListener('click', () => {
       const titleEl = document.getElementById('knowledgeTitle') as HTMLInputElement; const contentEl = document.getElementById('knowledgeContent') as HTMLTextAreaElement; const urlEl = document.getElementById('knowledgeUrl') as HTMLInputElement;
-      const urlInput = document.getElementById('knowledgeUrlInput'); const isUrl = urlInput && !urlInput.classList.contains('hidden');
+      const urlInput = document.getElementById('knowledgeUrlInput'); const fileInput = document.getElementById('knowledgeFileInput');
+      const isUrl = urlInput && !urlInput.classList.contains('hidden');
+      const isFile = fileInput && !fileInput.classList.contains('hidden');
       const title = titleEl?.value.trim(); const targetReviewType = (titleEl?.dataset.targetReviewType||'comprehensive') as ReviewType; const content = contentEl?.value.trim(); const url = urlEl?.value.trim();
       if(!title){alert('请输入标题');return;} const tc=REVIEW_TYPES[targetReviewType];
       if(isUrl){if(!url){alert('请输入链接');return;} this.addKnowledgeEntry({id:`k-${Date.now()}`,title,type:'url',url,targetDataset:tc.dataset,targetReviewType,createdAt:new Date().toISOString()});}
+      else if(isFile){
+        const fileText = this.knowledgeFileContent;
+        if(!fileText){alert('请先选择文件并等待解析完成');return;}
+        this.addKnowledgeEntry({id:`k-${Date.now()}`,title,type:'text',content:fileText,targetDataset:tc.dataset,targetReviewType,createdAt:new Date().toISOString()});
+        this.knowledgeFileContent=''; this.knowledgeFileName='';
+        const fileInfo=document.getElementById('knowledgeFileInfo'); if(fileInfo) fileInfo.classList.add('hidden');
+      }
       else{if(!content){alert('请输入内容');return;} this.addKnowledgeEntry({id:`k-${Date.now()}`,title,type:'text',content,targetDataset:tc.dataset,targetReviewType,createdAt:new Date().toISOString()});}
       titleEl.value='';contentEl.value='';urlEl.value='';
     });
     document.querySelectorAll('[data-kremove]').forEach(btn => btn.addEventListener('click', e => { const id=(e.target as HTMLElement).dataset.kremove; if(id) this.removeKnowledgeEntry(id); }));
+
+    // 知识库文件上传事件
+    const knowledgeFileDropZone = document.getElementById('knowledgeFileDropZone');
+    const knowledgeFileInputEl = document.getElementById('knowledgeFileInput_file') as HTMLInputElement;
+    if (knowledgeFileDropZone) {
+      knowledgeFileDropZone.addEventListener('click', () => knowledgeFileInputEl?.click());
+      knowledgeFileDropZone.addEventListener('dragover', (e: Event) => { e.preventDefault(); (knowledgeFileDropZone as HTMLElement).classList.add('border-blue-400','bg-blue-50'); });
+      knowledgeFileDropZone.addEventListener('dragleave', () => { knowledgeFileDropZone.classList.remove('border-blue-400','bg-blue-50'); });
+      knowledgeFileDropZone.addEventListener('drop', (e: DragEvent) => {
+        e.preventDefault(); knowledgeFileDropZone.classList.remove('border-blue-400','bg-blue-50');
+        const file = e.dataTransfer?.files[0];
+        if (file) this.handleKnowledgeFile(file);
+      });
+    }
+    if (knowledgeFileInputEl) {
+      knowledgeFileInputEl.addEventListener('change', () => {
+        const file = knowledgeFileInputEl.files?.[0];
+        if (file) this.handleKnowledgeFile(file);
+      });
+    }
+    document.getElementById('knowledgeFileClear')?.addEventListener('click', () => {
+      this.knowledgeFileContent = ''; this.knowledgeFileName = '';
+      const fileInfo = document.getElementById('knowledgeFileInfo'); if (fileInfo) fileInfo.classList.add('hidden');
+    });
     document.getElementById('importKnowledgeBtn')?.addEventListener('click', () => this.importKnowledgeToServer());
     document.getElementById('searchKnowledgeTestBtn')?.addEventListener('click', async () => {
       const query = (document.getElementById('searchTestInput') as HTMLInputElement)?.value.trim(); if(!query){alert('请输入关键词');return;}
