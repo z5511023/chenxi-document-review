@@ -1,0 +1,136 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --primary: #1a56db;
+    --primary-light: #3b82f6;
+    --primary-bg: #eff6ff;
+    --success: #059669;
+    --warning: #d97706;
+    --danger: #dc2626;
+  }
+
+  html {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  }
+}
+
+@layer components {
+  .line-clamp-1 {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+  }
+
+  .prose {
+    line-height: 1.75;
+  }
+
+  .prose-sm {
+    font-size: 0.875rem;
+    line-height: 1.7;
+  }
+
+  .prose-sm p {
+    margin-top: 0.75em;
+    margin-bottom: 0.75em;
+  }
+
+  .max-w-none {
+    max-width: none;
+  }
+
+  /* 自定义滚动条 */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #a1a1a1;
+  }
+
+  /* 上传区域动画 */
+  .upload-area {
+    transition: all 0.2s ease;
+  }
+
+  /* 文件项悬停效果 */
+  .file-item:hover {
+    background-color: #f9fafb;
+  }
+
+  /* 审核类型按钮悬停 */
+  .review-type-btn:hover,
+  .review-mode-btn:hover {
+    transform: translateY(-1px);
+  }
+
+  /* 历史记录项悬停 */
+  .history-item:hover {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  }
+
+  /* 加载动画 */
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .animate-spin {
+    animation: spin 1s linear infinite;
+  }
+
+  /* 渐变按钮 */
+  .btn-gradient {
+    background: linear-gradient(to right, #2563eb, #3b82f6);
+  }
+
+  .btn-gradient:hover {
+    background: linear-gradient(to right, #1d4ed8, #2563eb);
+  }
+
+  /* Tab 指示器动画 */
+  .result-tab {
+    transition: all 0.2s ease;
+  }
+
+  /* 评分条动画 */
+  #progressBar {
+    transition: width 0.5s ease;
+  }
+}
+
+/* 自定义布局 - 不使用 @layer 避免嵌套 media query 问题 */
+.grid-layout {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 1024px) {
+  .grid-layout {
+    grid-template-columns: 400px 1fr;
+  }
+}
+
+/* 文本省略 */
+.text-ellipsis {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
