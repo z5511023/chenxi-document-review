@@ -32,14 +32,14 @@ fetch('/api/parse-file', { method: 'POST', body: formData });
 
 详见 `references/file-parsing-guide.md`。
 
-### 规则 2：multer 必须用 v1 LTS 版本
+### 规则 2：不要用 multer，用 formidable
 
-Express 4.x 与 multer v2 不兼容，会导致上传请求挂起无响应。
+multer v1 与 Express 4.x 有兼容性风险，multer v2 完全不兼容，生产环境可能导致上传请求挂起无响应。使用 formidable 替代（无 Express 依赖，独立解析 multipart 表单）。
 
 ```
-✅ multer: ^1.4.5-lts.2
-✅ @types/multer: ^1.4.12
-❌ multer: ^2.x（与 Express 4.x 不兼容）
+✅ formidable: ^3.5.2（独立解析，不依赖 Express 版本）
+❌ multer v1: 可能卡死
+❌ multer v2: 与 Express 4.x 不兼容
 ```
 
 ### 规则 3：PDF 解析要有降级方案
@@ -79,7 +79,19 @@ assets/*.png
 assets/*.jpg
 ```
 
-### 规则 6：构建脚本必须容错
+### 规则 6：tsup 打包必须排除有副作用的 npm 包
+
+pdf-parse 内含测试 PDF 文件，被 tsup 打包后会导致运行时错误。formidable、jszip 也应排除，运行时从 node_modules 加载。
+
+```bash
+# ❌ 只排除 vite
+pnpm tsup server/server.ts --external vite
+
+# ✅ 排除所有有副作用的包
+pnpm tsup server/server.ts --external vite --external pdf-parse --external formidable --external jszip
+```
+
+### 规则 7：构建脚本必须容错
 
 ```bash
 # ❌ 任何失败都中断
@@ -91,7 +103,7 @@ pip3 install PyMuPDF 2>/dev/null || echo "PyMuPDF not available, using fallback"
 pnpm install --loglevel warn
 ```
 
-### 规则 7：不要对二进制数据使用贪婪正则
+### 规则 8：不要对二进制数据使用贪婪正则
 
 PDF 二进制流中用 `/stream[\s\S]*?endstream/g` 匹配可能导致回溯爆炸，进程卡死。只能用专业解析库。
 
@@ -111,7 +123,20 @@ PDF 二进制流中用 `/stream[\s\S]*?endstream/g` 匹配可能导致回溯爆�
 - `references/pdf-smart-skip.py`: 当需要解析大型工程 PDF 时读取，Python 脚本自动跳过审批表和目录
 - `references/dependency-versions.md`: 当需要确认依赖版本时读取，包含所有已知避坑的版本对照表
 
-## 注意事项
+### 规则 9：前后端都要加超时保护
+
+文件上传和 AI 审核都是耗时操作，必须加超时，否则用户会看到无限转圈。
+
+```typescript
+// 前端：fetch + AbortController
+const controller = new AbortController();
+const timer = setTimeout(() => controller.abort(), 60000);
+await fetch(url, { signal: controller.signal });
+
+// 后端：设置请求超时
+req.setTimeout(60000);
+res.setTimeout(60000);
+```
 
 - pdf-parse 必须作为正式依赖写在 package.json 中，不能用动态 import（tsup 打包后不可靠）
 - Python 脚本路径在 tsup 打包后会变，优先用 `COZE_WORKSPACE_PATH` 环境变量定位

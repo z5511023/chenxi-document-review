@@ -1,42 +1,52 @@
 # 文件上传解析完整指南
 
-## 后端接口实现（Express + multer）
+## 后端接口实现（Express + formidable）
+
+> ⚠️ 不要用 multer！multer v1/v2 在生产环境都有兼容性问题，会导致上传请求挂起。用 formidable 替代。
 
 ```typescript
-import multer from 'multer';
+import formidable from 'formidable';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { writeFile, unlink } from 'fs/promises';
+import { writeFile, unlink, readFile } from 'fs/promises';
 import path from 'path';
-import pdfParse from 'pdf-parse';
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const execFileAsync = promisify(execFile);
 
-router.post('/api/parse-file', upload.array('files', 10), async (req, res) => {
-  const files = req.files as Express.Multer.File[];
-  if (!files || files.length === 0) {
-    return res.status(400).json({ error: '未上传文件' });
-  }
+const FORM_OPTIONS: formidable.Options = {
+  maxFileSize: 20 * 1024 * 1024,
+  multiples: true,
+  keepExtensions: true,
+};
 
-  const results: { name: string; content: string; pages?: number }[] = [];
-  const tmpFiles: string[] = [];
+router.post('/api/parse-file', async (req, res) => {
+  req.setTimeout(60000);
+  res.setTimeout(60000);
 
   try {
-    for (const file of files) {
-      const ext = file.originalname.split('.').pop()?.toLowerCase() || '';
+    const form = formidable(FORM_OPTIONS);
+    const [, files] = await form.parse(req);
+    const uploadedFiles = files.files; // 前端 FormData 用 'files' 字段名
+
+    if (!uploadedFiles || uploadedFiles.length === 0) {
+      return res.status(400).json({ error: '未上传文件' });
+    }
+
+    const results: { name: string; content: string; pages?: number }[] = [];
+
+    for (const file of uploadedFiles) {
+      const ext = file.originalFilename?.split('.').pop()?.toLowerCase() || '';
+      const fileBuffer = await readFile(file.filepath);
 
       if (ext === 'pdf' || file.mimetype === 'application/pdf') {
-        // PDF 解析
         let parsedText = '';
         let pageCount = 0;
 
+        // 优先 Python PyMuPDF
         const usePython = await isPythonAvailable();
         if (usePython) {
-          const tmpPath = path.join('/tmp', `pdf_${Date.now()}.pdf`);
-          tmpFiles.push(tmpPath);
-          await writeFile(tmpPath, file.buffer);
           try {
-            const { stdout } = await execFileAsync('python3', [PDF_PARSER_SCRIPT, tmpPath, '0', '0'], {
+            const { stdout } = await execFileAsync('python3', [PDF_PARSER_SCRIPT, file.filepath, '0', '0'], {
               maxBuffer: 50 * 1024 * 1024, timeout: 30000,
             });
             const parseResult = JSON.parse(stdout);
@@ -44,50 +54,50 @@ router.post('/api/parse-file', upload.array('files', 10), async (req, res) => {
               parsedText = parseResult.text || '';
               pageCount = parseResult.pages || 0;
             }
-          } catch { /* Python 解析失败，降级 */ }
+          } catch { /* Python 失败，降级 */ }
         }
 
-        // 降级：Node.js pdf-parse
+        // 降级：pdf-parse
         if (!parsedText) {
-          const data = await pdfParse(file.buffer);
+          const pdfParse = (await import('pdf-parse')).default;
+          const data = await pdfParse(fileBuffer);
           parsedText = data.text || '';
           pageCount = data.numpages || 0;
         }
 
         results.push({
-          name: file.originalname,
+          name: file.originalFilename || 'unknown.pdf',
           content: parsedText || '[PDF解析结果为空]',
           pages: pageCount,
         });
 
       } else if (['doc', 'docx'].includes(ext)) {
-        // Word 文件
         const JSZip = (await import('jszip')).default;
-        const zip = await JSZip.loadAsync(file.buffer);
+        const zip = await JSZip.loadAsync(fileBuffer);
         const docXml = zip.file('word/document.xml');
         if (docXml) {
           const xml = await docXml.async('string');
           const text = xml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-          results.push({ name: file.originalname, content: text || '[Word解析结果为空]' });
+          results.push({ name: file.originalFilename || 'unknown.docx', content: text || '[Word解析结果为空]' });
         }
 
-      } else if (file.mimetype.startsWith('image/')) {
-        // 图片 base64
-        const base64 = file.buffer.toString('base64');
-        results.push({ name: file.originalname, content: `data:${file.mimetype};base64,${base64}` });
+      } else if (file.mimetype?.startsWith('image/')) {
+        const base64 = fileBuffer.toString('base64');
+        results.push({ name: file.originalFilename || 'unknown.png', content: `data:${file.mimetype};base64,${base64}` });
 
       } else {
-        // 纯文本
-        results.push({ name: file.originalname, content: file.buffer.toString('utf-8') });
+        results.push({ name: file.originalFilename || 'unknown.txt', content: fileBuffer.toString('utf-8') });
       }
-    }
-  } finally {
-    for (const tmp of tmpFiles) {
-      try { await unlink(tmp); } catch { /* ignore */ }
-    }
-  }
 
-  res.json({ success: true, files: results });
+      // 清理 formidable 临时文件
+      try { await unlink(file.filepath); } catch { /* ignore */ }
+    }
+
+    res.json({ success: true, files: results });
+  } catch (error) {
+    console.error('File parse error:', error);
+    if (!res.headersSent) res.status(500).json({ error: '文件解析失败' });
+  }
 });
 ```
 

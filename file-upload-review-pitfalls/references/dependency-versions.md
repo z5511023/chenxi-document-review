@@ -4,15 +4,23 @@
 
 | 包名 | ❌ 不要用 | ✅ 推荐版本 | 原因 |
 |------|----------|-----------|------|
-| multer | ^2.x | ^1.4.5-lts.2 | v2 与 Express 4.x 不兼容，上传请求会挂起 |
-| @types/multer | ^2.x | ^1.4.12 | 需与 multer v1 匹配 |
+| formidable | - | ^3.5.2 | 独立解析，不依赖 Express 版本 |
+| multer | ^1.x 或 ^2.x | 不要用 | v1 可能卡死，v2 与 Express 4.x 不兼容 |
 
 ## PDF 解析相关
 
 | 包名 | ❌ 不要用 | ✅ 推荐版本 | 原因 |
 |------|----------|-----------|------|
-| pdf-parse | 动态import/移除 | ^1.1.1（正式依赖） | tsup 打包后动态 import 不可靠 |
+| pdf-parse | 动态import/移除 | ^1.1.1（正式依赖+tsup external） | 内含测试PDF文件，打包后运行时出错 |
 | PyMuPDF | - | pip3 install PyMuPDF | 大型 PDF(200+页) 必备，pdf-parse 处理不了 |
+
+## tsup 打包排除列表
+
+```
+--external vite --external pdf-parse --external formidable --external jszip
+```
+
+所有含原生模块、测试数据或动态加载的包都必须排除，运行时从 node_modules 加载。
 
 ## LLM 相关
 

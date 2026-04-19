@@ -35,29 +35,29 @@ const response = await fetch('/api/parse-file', { method: 'POST', body: formData
 
 ---
 
-### BUG-002：multer v2 上传接口卡死
+### BUG-002：multer 导致上传接口卡死
 
 | 项目 | 内容 |
 |------|------|
 | **严重级别** | 🔴 致命 |
 | **发现时间** | 生产环境部署后 |
 | **现象** | 上传任何文件（大小无关）进度条无限转圈，请求无响应 |
-| **根因** | `multer@2.x` 是新大版本，与 Express 4.x 存在兼容性问题，导致请求被挂起 |
-| **修复** | 降级到 `multer@1.4.5-lts.2`（LTS 稳定版），`@types/multer` 降级到 `1.4.12` |
-| **教训** | **生产项目不要盲目使用最新大版本的 npm 包**，优先选择 LTS 版本；Express 4.x 配 multer 用 v1 |
+| **根因** | multer v1/v2 在生产环境都有兼容性问题：v2 与 Express 4.x 不兼容导致请求挂起；v1 在某些配置下也会卡死 |
+| **修复** | 完全移除 multer，改用 `formidable@3.5.2`（独立解析 multipart，不依赖 Express 版本） |
+| **教训** | **不要用 multer**，用 formidable 替代。formidable 不依赖 Express，版本兼容问题更少 |
 
 ---
 
-### BUG-003：pdf-parse 动态 import 失败 + 正则降级方案卡死
+### BUG-003：tsup 打包 pdf-parse 导致运行时失败
 
 | 项目 | 内容 |
 |------|------|
 | **严重级别** | 🔴 致命 |
 | **发现时间** | BUG-002 修复后继续排查 |
-| **现象** | PDF 解析仍然卡死 |
-| **根因** | 1) pdf-parse 从 package.json 移除后动态 import 找不到模块；2) 降级方案用正则从 PDF 二进制流提取文本，正则 `stream...endstream` 匹配超大数据导致回溯卡死 |
-| **修复** | 恢复 pdf-parse 为正式依赖，直接 `import pdfParse from 'pdf-parse'`，去掉正则降级方案 |
-| **教训** | **不要对二进制数据使用贪婪正则**；降级方案要简单可靠，不要越降越复杂 |
+| **现象** | 生产环境 PDF 解析失败，parse-file 接口无响应 |
+| **根因** | pdf-parse 内含测试 PDF 文件（`test/data/05-versions-space.pdf`），tsup 打包时将此文件打入 bundle，导致运行时异常或卡死；formidable、jszip 类似问题 |
+| **修复** | tsup 构建命令添加 `--external pdf-parse --external formidable --external jszip`，运行时从 node_modules 加载；pdf-parse 改用动态 `import()` |
+| **教训** | **tsup 打包必须排除含测试数据/原生模块的 npm 包**，否则打包后运行时出错 |
 
 ---
 
@@ -144,10 +144,16 @@ const response = await fetch('/api/parse-file', { method: 'POST', body: formData
 
 | 包名 | ❌ 不要用 | ✅ 推荐版本 | 原因 |
 |------|----------|-----------|------|
-| multer | ^2.1.1 | ^1.4.5-lts.2 | v2 与 Express 4.x 不兼容 |
-| @types/multer | ^2.1.0 | ^1.4.12 | 需与 multer v1 匹配 |
-| pdf-parse | 移除/动态import | ^1.1.1 正式依赖 | 动态 import 在 tsup 打包后不可靠 |
-| PyMuPDF | - | pip3 install PyMuPDF | 大型 PDF 解析必备，pdf-parse 处理不了 200+ 页 |
+| multer | 任何版本 | 不要用 | v1 可能卡死，v2 与 Express 4.x 不兼容 |
+| formidable | - | ^3.5.2 | 独立解析，不依赖 Express |
+| pdf-parse | 打包进bundle | ^1.1.1 + tsup external | 内含测试PDF，打包后出错 |
+| PyMuPDF | - | pip3 install PyMuPDF | 大型 PDF 解析必备 |
+
+### tsup 打包排除列表
+
+```bash
+pnpm tsup server/server.ts --external vite --external pdf-parse --external formidable --external jszip
+```
 
 ### 文件处理架构最佳实践
 
