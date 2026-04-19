@@ -838,6 +838,7 @@ export class ReviewAssistant {
             <div class="flex-1 bg-gray-100 rounded-full h-1.5 max-w-[150px]"><div class="h-1.5 rounded-full ${result.score>=80?'bg-green-500':result.score>=60?'bg-yellow-500':'bg-red-500'}" style="width:${result.score}%"></div></div>
             ${this.renderKnowledgeSourceBadges()}
           </div>
+          ${(result as any)._totalSegments > 1 ? `<div class="mt-1.5 px-2.5 py-1.5 bg-blue-50 rounded-lg flex items-center gap-2 text-xs"><span class="text-blue-600">📄 全文分段审核</span><span class="text-gray-600">共 ${(result as any)._totalSegments} 段，每段独立审核后合并结果，全文覆盖无遗漏</span></div>` : ''}
         </div>
         <div class="px-4 pt-2 flex gap-2 border-b border-gray-200 overflow-x-auto">
           <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='comparison'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="comparison">📋 对比标注</button>
@@ -1025,7 +1026,7 @@ export class ReviewAssistant {
 
   private renderLoadingOverlay(): string {
     const tc = REVIEW_TYPES[this.reviewType];
-    return `<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"><div class="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center"><div class="w-14 h-14 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-5"></div><h3 class="font-semibold text-gray-900 mb-2">AI 智能审核中</h3><p id="loadingStatusText" class="text-sm text-blue-600 font-medium mb-3">正在准备审核...</p><div class="space-y-1.5 text-sm text-gray-500 mb-4"><div>📄 解析文件内容</div><div>📚 检索「${tc?.datasetName||'知识库'}」</div><div>🔴 检测错别字</div><div>🤖 AI 对比标注</div></div><div class="w-full bg-gray-100 rounded-full h-1.5"><div class="h-1.5 bg-blue-600 rounded-full animate-pulse" style="width:60%"></div></div></div></div>`;
+    return `<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"><div class="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center"><div class="w-14 h-14 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-5"></div><h3 class="font-semibold text-gray-900 mb-2">AI 智能审核中</h3><p id="loadingStatusText" class="text-sm text-blue-600 font-medium mb-3">正在准备审核...</p><div class="space-y-1.5 text-sm text-gray-500 mb-4"><div>📄 解析文件内容（全文覆盖）</div><div>📚 检索「${tc?.datasetName||'知识库'}」</div><div>🔴 检测错别字</div><div>🤖 AI 分段对比标注</div></div><p class="text-xs text-gray-400 mb-2">长文档将自动分段审核，全文无遗漏</p><div class="w-full bg-gray-100 rounded-full h-1.5"><div class="h-1.5 bg-blue-600 rounded-full animate-pulse" style="width:60%"></div></div></div></div>`;
   }
 
   private renderPreviewLoadingOverlay(): string {

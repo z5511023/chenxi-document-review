@@ -134,6 +134,296 @@ Object.keys(REVIEW_PROMPTS).forEach((key) => {
   REVIEW_PROMPTS[key] += TYPO_CHECK_INSTRUCTION;
 });
 
+// ==================== 分段审核辅助函数 ====================
+
+/**
+ * 智能跳过报审单和目录，保留全部正文
+ * 工程文件通常结构：报审单 → 目录 → 正文（第1章、第2章...）
+ * 只跳过报审单和目录，正文必须完整保留
+ */
+function skipApprovalAndTOC(content: string): { skipped: string; body: string } {
+  // 报审单的典型关键词
+  const approvalKeywords = ['方案报审表', '报审表', '报审单', '施工报审', '审批表'];
+  // 目录的典型关键词
+  const tocKeywords = ['目  录', '目　录', '目录', 'CONTENTS', 'Contents'];
+
+  // 按"==="分割（前端多文件上传时的分隔符）
+  const fileSections = content.split('\n\n---\n\n');
+
+  const skippedParts: string[] = [];
+  const bodyParts: string[] = [];
+
+  for (const section of fileSections) {
+    // 按 === filename === 分割出文件名和内容
+    const fileMatch = section.match(/^=== (.+?) ===\n([\s\S]*)$/);
+    const fileName = fileMatch ? fileMatch[1] : '';
+    const fileContent = fileMatch ? fileMatch[2] : section;
+
+    // 如果整个 section 是报审单（文件名包含报审，或内容以报审开头）
+    if (approvalKeywords.some(kw => fileName.includes(kw) || fileContent.substring(0, 200).includes(kw))) {
+      // 尝试只跳过报审单部分，保留后续正文
+      const lines = fileContent.split('\n');
+      let approvalEnd = 0;
+      let foundApproval = false;
+      for (let i = 0; i < Math.min(lines.length, 50); i++) {
+        if (approvalKeywords.some(kw => lines[i].includes(kw))) foundApproval = true;
+        // 报审单通常在第一个章节标题之前结束（如 "一、" "1." "第一章" "1.1" 等）
+        if (foundApproval && /^(第[一二三四五六七八九十]+[章节]|[一二三四五六七八九十]+[、.]\s|第?\d+[\.、]\s|\d+\.\d+\s)/.test(lines[i].trim())) {
+          approvalEnd = i;
+          break;
+        }
+      }
+      if (approvalEnd > 0) {
+        skippedParts.push(lines.slice(0, approvalEnd).join('\n'));
+        bodyParts.push(`=== ${fileName} ===\n${lines.slice(approvalEnd).join('\n')}`);
+      } else {
+        // 无法分离报审单，保留全部
+        bodyParts.push(section);
+      }
+      continue;
+    }
+
+    // 处理目录：在内容中找目录段落并跳过
+    const lines = fileContent.split('\n');
+    let tocStart = -1;
+    let tocEnd = -1;
+
+    for (let i = 0; i < Math.min(lines.length, 100); i++) {
+      if (tocKeywords.some(kw => lines[i].trim() === kw || lines[i].trim().startsWith(kw))) {
+        tocStart = i;
+      }
+      if (tocStart >= 0 && tocEnd < 0) {
+        // 目录结束：遇到第一个章节标题（如"1 xxx" "一、xxx" "第一章 xxx"）
+        if (i > tocStart && /^(第[一二三四五六七八九十]+[章节]|[一二三四五六七八九十]+[、.]\s*[^、.]|\d+\s+[^\d.])/i.test(lines[i].trim())) {
+          // 确认这不是目录行（目录行通常有页码或"......"）
+          if (!lines[i].includes('...') && !/\d+\s*$/.test(lines[i].trim().replace(/\s+/g, ' '))) {
+            tocEnd = i;
+            break;
+          }
+        }
+      }
+    }
+
+    if (tocStart >= 0 && tocEnd > tocStart) {
+      skippedParts.push(lines.slice(tocStart, tocEnd).join('\n'));
+      const remaining = [...lines.slice(0, tocStart), ...lines.slice(tocEnd)].join('\n');
+      bodyParts.push(`=== ${fileName} ===\n${remaining}`);
+    } else {
+      bodyParts.push(section);
+    }
+  }
+
+  return {
+    skipped: skippedParts.join('\n'),
+    body: bodyParts.join('\n\n---\n\n'),
+  };
+}
+
+interface ContentChunk {
+  title: string;
+  content: string;
+}
+
+/**
+ * 按章节拆分正文，每段不超过 maxChars
+ * 优先按章节标题拆分，章节过长时按段落拆分
+ */
+function splitByChapter(body: string, maxChars: number): ContentChunk[] {
+  if (body.length <= maxChars) {
+    return [{ title: '全文', content: body }];
+  }
+
+  // 章节标题正则：匹配 "第X章" "1." "1.1" "一、" 等
+  const chapterRegex = /^(第[一二三四五六七八九十百]+[章节篇]|[一二三四五六七八九十]+[、．.]\s|第?\d+[\.、．]\s*\S|\d+\.\d+\s+\S)/gm;
+
+  const lines = body.split('\n');
+  const sections: Array<{ title: string; startLine: number }> = [];
+  let firstSectionLine = 0;
+
+  // 找到所有章节分割点
+  for (let i = 0; i < lines.length; i++) {
+    if (chapterRegex.test(lines[i])) {
+      chapterRegex.lastIndex = 0;
+      if (sections.length === 0 && i > 0) {
+        // 第一个章节之前的内容作为前言
+        sections.push({ title: '前言', startLine: 0 });
+        firstSectionLine = i;
+      }
+      const title = lines[i].trim().substring(0, 30);
+      sections.push({ title, startLine: i });
+    }
+  }
+
+  // 如果没找到章节结构，按固定长度拆分
+  if (sections.length <= 1) {
+    return splitByFixedSize(body, maxChars);
+  }
+
+  // 按章节组装 chunk，合并小章节
+  const chunks: ContentChunk[] = [];
+  let currentChunk = '';
+  let currentTitle = '';
+
+  for (let i = 0; i < sections.length; i++) {
+    const startLine = sections[i].startLine;
+    const endLine = i + 1 < sections.length ? sections[i + 1].startLine : lines.length;
+    const sectionContent = lines.slice(startLine, endLine).join('\n');
+
+    if (currentChunk.length + sectionContent.length > maxChars && currentChunk.length > 0) {
+      // 当前 chunk 已满，保存并开始新 chunk
+      chunks.push({ title: currentTitle, content: currentChunk });
+      currentChunk = sectionContent;
+      currentTitle = sections[i].title;
+    } else {
+      // 追加到当前 chunk
+      currentChunk += (currentChunk ? '\n\n' : '') + sectionContent;
+      currentTitle = currentTitle || sections[i].title;
+      if (i > 0 && !currentTitle.includes('~')) {
+        currentTitle = `${sections[0].title} ~ ${sections[i].title}`;
+      }
+    }
+  }
+
+  if (currentChunk) {
+    chunks.push({ title: currentTitle, content: currentChunk });
+  }
+
+  return chunks;
+}
+
+/** 按固定大小拆分（兜底方案） */
+function splitByFixedSize(body: string, maxChars: number): ContentChunk[] {
+  const chunks: ContentChunk[] = [];
+  const overlap = 500; // 段间重叠，避免断句丢失上下文
+  let start = 0;
+  let idx = 1;
+
+  while (start < body.length) {
+    let end = start + maxChars;
+    if (end < body.length) {
+      // 在最近的句号/换行处断开
+      const breakPoints = [body.lastIndexOf('\n', end), body.lastIndexOf('。', end), body.lastIndexOf('；', end)];
+      const breakPoint = Math.max(...breakPoints.filter(bp => bp > start + maxChars * 0.5));
+      if (breakPoint > 0) end = breakPoint + 1;
+    }
+
+    chunks.push({
+      title: `第 ${idx} 段`,
+      content: body.substring(start, end),
+    });
+
+    start = end - overlap;
+    idx++;
+  }
+
+  return chunks;
+}
+
+/**
+ * 合并多段审核结果
+ * - 评分：取各段最低分
+ * - 问题：合并所有段的问题，标注来自哪段
+ * - 标注内容：按顺序拼接
+ * - 建议：合并去重
+ */
+function mergeSegmentResults(
+  segments: Array<Record<string, unknown>>,
+  originalContent: string,
+  skippedContent: string,
+): Record<string, unknown> {
+  if (segments.length === 1) {
+    const r = segments[0];
+    r._totalSegments = 1;
+    return r;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allIssues: any[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allSuggestions: any[] = [];
+  const allAnnotated: string[] = [];
+  const allDetails: string[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allReferences: any[] = [];
+  let minScore = 100;
+  let worstConclusion = 'pass';
+
+  for (const seg of segments) {
+    const segNum = seg._segment as number;
+    const segTitle = (seg._segmentTitle as string) || `第${segNum}段`;
+
+    // 评分取最低
+    const score = (seg.score as number) || 70;
+    if (score < minScore) minScore = score;
+
+    // 结论取最差
+    const conclusion = (seg.conclusion as string) || 'warning';
+    if (conclusion === 'fail' || (conclusion === 'warning' && worstConclusion === 'pass')) {
+      worstConclusion = conclusion;
+    }
+
+    // 合并问题，标注来源段
+    const issues = (seg.issues as Array<Record<string, unknown>>) || [];
+    for (const issue of issues) {
+      allIssues.push({
+        ...issue,
+        title: `[${segTitle}] ${issue.title}`,
+        location: issue.location || `第${segNum}段`,
+      });
+    }
+
+    // 合并建议
+    const suggestions = (seg.suggestions as string[]) || [];
+    for (const s of suggestions) {
+      if (!allSuggestions.includes(s)) allSuggestions.push(s);
+    }
+
+    // 拼接标注内容
+    const annotated = (seg.annotatedContent as string) || '';
+    if (annotated) {
+      allAnnotated.push(`\n=== ${segTitle} ===\n${annotated}`);
+    }
+
+    // 合并详情
+    const details = (seg.details as string) || '';
+    if (details) allDetails.push(`【${segTitle}】\n${details}`);
+
+    // 合并引用
+    const refs = (seg.references as Array<Record<string, unknown>>) || [];
+    allReferences.push(...refs);
+  }
+
+  // 如果有跳过的报审单/目录，在标注内容开头添加说明
+  let fullAnnotated = '';
+  if (skippedContent.trim()) {
+    fullAnnotated = `[已跳过报审单/目录部分，共 ${skippedContent.length} 字符]\n\n`;
+  }
+  fullAnnotated += allAnnotated.join('\n\n');
+
+  // 限制标注内容长度（避免数据库字段溢出）
+  if (fullAnnotated.length > 200000) {
+    fullAnnotated = fullAnnotated.substring(0, 180000) + '\n\n[... 标注内容过长已截断 ...]';
+  }
+
+  return {
+    conclusion: worstConclusion,
+    score: minScore,
+    issues: allIssues,
+    suggestions: allSuggestions,
+    details: allDetails.join('\n\n'),
+    annotatedContent: fullAnnotated,
+    references: allReferences,
+    _totalSegments: segments.length,
+    _segmentSummary: segments.map(s => ({
+      segment: s._segment,
+      title: s._segmentTitle,
+      score: s.score,
+      issues: ((s.issues as Array<unknown>) || []).length,
+      failed: s._failed || false,
+    })),
+  };
+}
+
 // ==================== 用户认证辅助 ====================
 interface AuthUser {
   id: string;
@@ -506,138 +796,159 @@ router.delete('/api/users/:id', requireAdmin, async (req: Request, res: Response
 });
 
 // ==================== 提交审核 ====================
-router.post('/api/review', requireAuth, async (req: Request, res: Response) => {
-  try {
-    const authReq = req as Request & { user?: AuthUser };
-    const { fileName, fileContent, reviewType, reviewMode, userRole } = req.body;
+	router.post('/api/review', requireAuth, async (req: Request, res: Response) => {
+	  try {
+	    const authReq = req as Request & { user?: AuthUser };
+	    const { fileName, fileContent, reviewType, reviewMode, userRole } = req.body;
 
-    if (!fileName || !fileContent || !reviewType) {
-      res.status(400).json({ error: '缺少必要参数' });
-      return;
-    }
+	    if (!fileName || !fileContent || !reviewType) {
+	      res.status(400).json({ error: '缺少必要参数' });
+	      return;
+	    }
 
-    const validTypes = ['personnel', 'enterprise', 'technical', 'safety', 'document', 'comprehensive'];
-    if (!validTypes.includes(reviewType)) {
-      res.status(400).json({ error: '无效的审核类型' });
-      return;
-    }
+	    const validTypes = ['personnel', 'enterprise', 'technical', 'safety', 'document', 'comprehensive'];
+	    if (!validTypes.includes(reviewType)) {
+	      res.status(400).json({ error: '无效的审核类型' });
+	      return;
+	    }
 
-    const supabase: AnyClient = await getSupabaseClient();
-    const { data: record, error: dbError } = await supabase
-      .from('review_records')
-      .insert({
-        file_name: fileName,
-        review_type: reviewType,
-        review_mode: reviewMode || 'quick',
-        user_role: userRole || 'general',
-        user_id: authReq.user!.id,
-        status: 'processing',
-      })
-      .select('id')
-      .single();
+	    const supabase: AnyClient = await getSupabaseClient();
+	    const { data: record, error: dbError } = await supabase
+	      .from('review_records')
+	      .insert({
+	        file_name: fileName,
+	        review_type: reviewType,
+	        review_mode: reviewMode || 'quick',
+	        user_role: userRole || 'general',
+	        user_id: authReq.user!.id,
+	        status: 'processing',
+	      })
+	      .select('id')
+	      .single();
 
-    if (dbError) {
-      console.error('DB insert error:', dbError);
-      res.status(500).json({ error: '创建审核记录失败' });
-      return;
-    }
+	    if (dbError) {
+	      console.error('DB insert error:', dbError);
+	      res.status(500).json({ error: '创建审核记录失败' });
+	      return;
+	    }
 
-    const recordId = record.id;
-    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as unknown as Headers);
+	    const recordId = record.id;
+	    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as unknown as Headers);
 
-    const knowledgeResult = await searchKnowledge(reviewType, fileName, customHeaders);
+	    // 知识库检索（只需检索一次，所有段共享）
+	    const knowledgeResult = await searchKnowledge(reviewType, fileName, customHeaders);
 
-    let webSearchResult = { context: '', used: false, results: 0 };
-    if (!knowledgeResult.used || knowledgeResult.chunks < 2) {
-      webSearchResult = await searchWeb(reviewType, fileName, customHeaders);
-    }
+	    let webSearchResult = { context: '', used: false, results: 0 };
+	    if (!knowledgeResult.used || knowledgeResult.chunks < 2) {
+	      webSearchResult = await searchWeb(reviewType, fileName, customHeaders);
+	    }
 
-    let contextSection = '';
-    if (knowledgeResult.used) {
-      contextSection += `\n\n=== 知识库检索结果（模块：${knowledgeResult.datasets.join(', ')}） ===\n${knowledgeResult.context}`;
-    }
-    if (webSearchResult.used) {
-      contextSection += `\n\n=== 联网搜索结果 ===\n${webSearchResult.context}`;
-    }
-    if (!knowledgeResult.used && !webSearchResult.used) {
-      contextSection += '\n\n注意：知识库和联网搜索均未找到直接相关标准，请基于专业知识审核。';
-    }
+	    let contextSection = '';
+	    if (knowledgeResult.used) {
+	      contextSection += `\n\n=== 知识库检索结果（模块：${knowledgeResult.datasets.join(', ')}） ===\n${knowledgeResult.context}`;
+	    }
+	    if (webSearchResult.used) {
+	      contextSection += `\n\n=== 联网搜索结果 ===\n${webSearchResult.context}`;
+	    }
+	    if (!knowledgeResult.used && !webSearchResult.used) {
+	      contextSection += '\n\n注意：知识库和联网搜索均未找到直接相关标准，请基于专业知识审核。';
+	    }
 
-    let systemPrompt = REVIEW_PROMPTS[reviewType] || REVIEW_PROMPTS.comprehensive;
-    systemPrompt += reviewMode === 'quick'
-      ? '\n\n快速审核模式，重点检查关键问题和错别字，必须包含annotatedContent。'
-      : '\n\n详细审核模式，全面深入审核，必须包含annotatedContent。';
-    systemPrompt += contextSection;
+	    let baseSystemPrompt = REVIEW_PROMPTS[reviewType] || REVIEW_PROMPTS.comprehensive;
+	    baseSystemPrompt += reviewMode === 'quick'
+	      ? '\n\n快速审核模式，重点检查关键问题和错别字，必须包含annotatedContent。'
+	      : '\n\n详细审核模式，全面深入审核，必须包含annotatedContent。';
+	    baseSystemPrompt += contextSection;
 
-    // 智能截取：
-    // doubao-seed-1-6-lite 上下文 128K tokens ≈ 约 20万汉字
-    // 快速审核：取核心 50000 字符（约 25000 字）
-    // 详细审核：取核心 80000 字符（约 40000 字）
-    // 截取策略：跳过文件开头的前言/审批表（前500字），取主体内容的 80% 头部 + 20% 尾部
-    const maxContentLength = reviewMode === 'detailed' ? 80000 : 50000;
-    let contentToSend = fileContent;
+	    // ====== 分段审核策略 ======
+	    // 1. 智能跳过报审单/目录，保留所有正文
+	    // 2. 正文按章节拆分为多段（每段不超过 CHUNK_SIZE 字符）
+	    // 3. 每段分别调用 LLM 审核（多段多 Token，但保证全文覆盖）
+	    // 4. 合并所有段的结果：取最低评分、合并问题列表、拼接标注内容
 
-    if (fileContent.length > maxContentLength) {
-      // 尝试跳过前言/审批表部分（通常前500字是封面/审批页）
-      const skipIntro = 500;
-      const actualStart = fileContent.length > skipIntro + maxContentLength ? skipIntro : 0;
-      const availableContent = fileContent.substring(actualStart);
-      const headLen = Math.floor(maxContentLength * 0.8);
-      const tailLen = maxContentLength - headLen;
-      contentToSend = availableContent.substring(0, headLen)
-        + '\n\n[... 中间部分内容因长度限制已省略，省略约 ' + Math.max(0, availableContent.length - maxContentLength).toLocaleString() + ' 字符 ...]\n\n'
-        + availableContent.substring(availableContent.length - tailLen);
-    }
+	    const CHUNK_SIZE = reviewMode === 'detailed' ? 60000 : 40000;
 
-    const messages = [
-      { role: 'system' as const, content: systemPrompt },
-      { role: 'user' as const, content: `请审核以下文件：\n\n文件名：${fileName}\n审核类型：${reviewType}\n审核模式：${reviewMode}\n用户角色：${userRole || 'general'}\n文件总长度：${fileContent.length}字（${fileContent.length > maxContentLength ? '已截取核心部分' : '完整内容'}）\n\n文件内容：\n${contentToSend}` },
-    ];
+	    // 智能识别并跳过报审单/目录，保留全部正文
+	    const { skipped, body } = skipApprovalAndTOC(fileContent);
+	    console.log(`[分段审核] 原文 ${fileContent.length} 字符，跳过报审单/目录 ${skipped.length} 字符，正文 ${body.length} 字符`);
 
-    let fullContent = '';
-    try {
-      const config = new LLMConfig();
-      const client = new LLMClient(config, customHeaders);
-      const stream = client.stream(messages, {
-        model: 'doubao-seed-1-6-lite-251015',
-        temperature: reviewMode === 'detailed' ? 0.2 : 0.3,
-      });
-      for await (const chunk of stream) {
-        if (chunk.content) fullContent += chunk.content.toString();
-      }
-    } catch (llmError) {
-      console.error('LLM call failed:', llmError);
-      await supabase.from('review_records').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', recordId);
-      res.status(500).json({ error: 'AI 审核服务暂时不可用' });
-      return;
-    }
+	    // 按章节拆分正文
+	    const chunks = splitByChapter(body, CHUNK_SIZE);
+	    console.log(`[分段审核] 拆分为 ${chunks.length} 段，段长: ${chunks.map(c => c.content.length).join(', ')}`);
 
-    let result: Record<string, unknown>;
-    try {
-      const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
-      result = jsonMatch ? JSON.parse(jsonMatch[0]) : {
-        conclusion: 'warning', score: 70, issues: [], suggestions: ['建议人工复核'], details: fullContent, annotatedContent: fileContent.substring(0, 3000),
-      };
-    } catch {
-      result = { conclusion: 'warning', score: 70, issues: [], suggestions: ['建议人工复核'], details: fullContent, annotatedContent: fileContent.substring(0, 3000) };
-    }
+	    // 逐段审核
+	    const segmentResults: Array<Record<string, unknown>> = [];
+	    for (let i = 0; i < chunks.length; i++) {
+	      const chunk = chunks[i];
+	      const isMultiChunk = chunks.length > 1;
+	      const segmentPrompt = baseSystemPrompt + (isMultiChunk
+	        ? `\n\n【分段审核】这是文件的第 ${i + 1}/${chunks.length} 段（${chunk.title || '正文段落'}），共 ${chunk.content.length} 字符。请专注审核本段内容，标注本段的问题和错别字。`
+	        : '');
 
-    if (!result.annotatedContent) result.annotatedContent = fileContent.substring(0, 3000);
+	      const messages = [
+	        { role: 'system' as const, content: segmentPrompt },
+	        { role: 'user' as const, content: `请审核以下文件：\n\n文件名：${fileName}\n审核类型：${reviewType}\n审核模式：${reviewMode}\n用户角色：${userRole || 'general'}\n${isMultiChunk ? `分段：第 ${i + 1}/${chunks.length} 段\n` : ''}文件内容：\n${chunk.content}` },
+	      ];
 
-    await supabase.from('review_records').update({ status: 'completed', result, updated_at: new Date().toISOString() }).eq('id', recordId);
+	      console.log(`[分段审核] 审核第 ${i + 1}/${chunks.length} 段 (${chunk.content.length} 字符)...`);
+	      let fullContent = '';
+	      try {
+	        const config = new LLMConfig();
+	        const client = new LLMClient(config, customHeaders);
+	        const stream = client.stream(messages, {
+	          model: 'doubao-seed-1-6-lite-251015',
+	          temperature: reviewMode === 'detailed' ? 0.2 : 0.3,
+	        });
+	        for await (const chunk2 of stream) {
+	          if (chunk2.content) fullContent += chunk2.content.toString();
+	        }
+	      } catch (llmError) {
+	        console.error(`[分段审核] 第 ${i + 1} 段 LLM 调用失败:`, llmError);
+	        segmentResults.push({
+	          conclusion: 'warning', score: 70,
+	          issues: [{ level: 'medium', title: `第${i + 1}段审核失败`, description: 'AI 服务暂时不可用，请稍后重试' }],
+	          suggestions: ['建议对失败段落重新审核'],
+	          annotatedContent: chunk.content.substring(0, 2000),
+	          _segment: i + 1, _segmentTitle: chunk.title, _failed: true,
+	        });
+	        continue;
+	      }
 
-    res.json({
-      success: true, id: recordId, result, fileName, reviewType, reviewMode,
-      knowledgeUsed: knowledgeResult.used, knowledgeChunks: knowledgeResult.chunks,
-      knowledgeDatasets: knowledgeResult.datasets,
-      webSearchUsed: webSearchResult.used, webSearchResults: webSearchResult.results,
-    });
-  } catch (error) {
-    console.error('Review API error:', error);
-    res.status(500).json({ error: '审核服务异常' });
-  }
-});
+	      let segResult: Record<string, unknown>;
+	      try {
+	        const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
+	        segResult = jsonMatch ? JSON.parse(jsonMatch[0]) : {
+	          conclusion: 'warning', score: 70, issues: [], suggestions: ['建议人工复核'],
+	          details: fullContent, annotatedContent: chunk.content.substring(0, 2000),
+	        };
+	      } catch {
+	        segResult = { conclusion: 'warning', score: 70, issues: [], suggestions: ['建议人工复核'], details: fullContent, annotatedContent: chunk.content.substring(0, 2000) };
+	      }
+	      if (!segResult.annotatedContent) segResult.annotatedContent = chunk.content.substring(0, 2000);
+	      segResult._segment = i + 1;
+	      segResult._segmentTitle = chunk.title;
+	      segmentResults.push(segResult);
+	      console.log(`[分段审核] 第 ${i + 1} 段审核完成，评分: ${segResult.score}`);
+	    }
 
+	    // 合并所有段的审核结果
+	    const result = mergeSegmentResults(segmentResults, fileContent, skipped);
+	    console.log(`[分段审核] 合并完成，最终评分: ${result.score}，问题数: ${(result.issues as Array<unknown>)?.length || 0}`);
+
+	    await supabase.from('review_records').update({ status: 'completed', result, updated_at: new Date().toISOString() }).eq('id', recordId);
+
+	    res.json({
+	      success: true, id: recordId, result, fileName, reviewType, reviewMode,
+	      knowledgeUsed: knowledgeResult.used, knowledgeChunks: knowledgeResult.chunks,
+	      knowledgeDatasets: knowledgeResult.datasets,
+	      webSearchUsed: webSearchResult.used, webSearchResults: webSearchResult.results,
+	      totalSegments: chunks.length, totalChars: fileContent.length, bodyChars: body.length,
+	    });
+	  } catch (error) {
+	    console.error('Review API error:', error);
+	    res.status(500).json({ error: '审核服务异常' });
+	  }
+	});
 // ==================== 获取审核历史列表（仅返回当前用户的） ====================
 router.get('/api/reviews', requireAuth, async (req: Request, res: Response) => {
   try {
