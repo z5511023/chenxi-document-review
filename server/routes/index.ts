@@ -677,6 +677,61 @@ router.get('/api/health', async (_req: Request, res: Response) => {
   res.json({ status: 'ok', database: dbStatus, knowledge: 'ok', webSearch: 'ok', timestamp: new Date().toISOString() });
 });
 
+// ==================== 数据库存储统计（仅管理员） ====================
+router.get('/api/db-stats', requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const supabase: AnyClient = await getSupabaseClient();
+
+    // 查询各表记录数
+    const [usersRes, reviewsRes] = await Promise.all([
+      supabase.from('users').select('id', { count: 'exact', head: true }),
+      supabase.from('review_records').select('id', { count: 'exact', head: true }),
+    ]);
+
+    const tableStats = {
+      users: { count: usersRes.count ?? 0 },
+      review_records: { count: reviewsRes.count ?? 0 },
+    };
+
+    // 尝试通过 RPC 查询数据库大小（需要 Supabase 开启 pg_net 或自定义函数）
+    let dbSizeMB: number | null = null;
+    try {
+      const { data: sizeData } = await supabase.rpc('get_database_size');
+      if (sizeData) dbSizeMB = typeof sizeData === 'number' ? sizeData : null;
+    } catch {
+      // RPC 函数可能不存在，忽略
+    }
+
+    // 估算：Supabase 免费版配额 500MB，根据记录数粗略估算已用空间
+    // review_records 的 result 字段 (jsonb) 是主要占用空间的来源
+    const estimatedReviewSizeKB = (tableStats.review_records.count || 0) * 15; // 平均每条 ~15KB
+    const estimatedUserSizeKB = (tableStats.users.count || 0) * 2; // 平均每条 ~2KB
+    const estimatedUsedMB = Math.round((estimatedReviewSizeKB + estimatedUserSizeKB) / 1024 * 10) / 10;
+
+    // 如果 RPC 返回了真实数据库大小则优先使用
+    const usedMB = dbSizeMB ?? estimatedUsedMB;
+    const totalMB = 500; // Supabase 免费版配额
+    const remainingMB = Math.max(0, totalMB - usedMB);
+    const usagePercent = Math.min(100, Math.round(usedMB / totalMB * 1000) / 10);
+
+    res.json({
+      success: true,
+      data: {
+        dbSizeMB: dbSizeMB,
+        usedMB,
+        totalMB,
+        remainingMB,
+        usagePercent,
+        tables: tableStats,
+        dataSource: dbSizeMB ? 'rpc' : 'estimate',
+      },
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
 // ==================== 登录 ====================
 router.post('/api/auth/login', async (req: Request, res: Response) => {
   try {

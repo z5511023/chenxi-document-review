@@ -198,6 +198,47 @@ export class ReviewAssistant {
     } catch (error) { console.error('加载用户列表失败:', error); }
   }
 
+  private dbStats: { usedMB: number; totalMB: number; remainingMB: number; usagePercent: number; tables: Record<string, {count: number}>; dataSource: string } | null = null;
+
+  private async loadDbStats() {
+    if (!this.isAdmin()) return;
+    try {
+      const res = await fetch('/api/db-stats', { headers: this.authHeaders() });
+      const data = await res.json();
+      if (data.success && data.data) {
+        this.dbStats = data.data;
+        this.renderDbStats();
+      }
+    } catch (error) { console.error('加载数据库统计失败:', error); }
+  }
+
+  private renderDbStats() {
+    const el = document.getElementById('dbStatsContent');
+    if (!el || !this.dbStats) { if (el) el.textContent = '暂无数据'; return; }
+    const s = this.dbStats;
+    const barColor = s.usagePercent < 50 ? 'bg-green-500' : s.usagePercent < 80 ? 'bg-yellow-500' : 'bg-red-500';
+    const textColor = s.usagePercent < 50 ? 'text-green-700' : s.usagePercent < 80 ? 'text-yellow-700' : 'text-red-700';
+    el.innerHTML = `
+      <div class="mb-3">
+        <div class="flex justify-between items-baseline mb-1">
+          <span class="text-gray-600">已用 <span class="font-semibold ${textColor}">${s.usedMB.toFixed(1)} MB</span> / 总计 ${s.totalMB} MB</span>
+          <span class="font-semibold ${textColor}">${s.usagePercent}%</span>
+        </div>
+        <div class="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
+          <div class="${barColor} h-full rounded-full transition-all duration-500" style="width:${Math.min(100, s.usagePercent)}%"></div>
+        </div>
+        <div class="flex justify-between mt-1">
+          <span class="text-gray-400">剩余 <span class="font-medium text-gray-600">${s.remainingMB.toFixed(1)} MB</span></span>
+          <span class="text-gray-400">${s.dataSource === 'rpc' ? '📊 实际数据' : '📈 估算数据'}</span>
+        </div>
+      </div>
+      <div class="border-t border-gray-100 pt-2 space-y-1">
+        <div class="flex justify-between"><span class="text-gray-500">👤 用户表</span><span class="font-medium text-gray-700">${s.tables?.users?.count ?? 0} 条</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">📋 审核记录表</span><span class="font-medium text-gray-700">${s.tables?.review_records?.count ?? 0} 条</span></div>
+      </div>
+    `;
+  }
+
   // ==================== 文件和审核 ====================
   addFiles(files: File[]) {
     const validTypes = ['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','image/jpeg','image/png','image/jpg'];
@@ -219,7 +260,7 @@ export class ReviewAssistant {
   setRole(role: Role) { this.role = role; this.render(); }
   setActiveTab(tab: TabView) {
     this.activeTab = tab;
-    if (tab === 'admin') this.loadManagedUsers();
+    if (tab === 'admin') { this.loadManagedUsers(); this.loadDbStats(); }
     this.render();
   }
 
@@ -750,6 +791,9 @@ export class ReviewAssistant {
         <div class="max-w-7xl mx-auto px-4 py-6">
           ${this.activeTab === 'review' ? this.renderReviewTab() : this.activeTab === 'knowledge' ? this.renderKnowledgeTab() : this.renderAdminTab()}
         </div>
+      </div>
+      <div class="fixed bottom-3 right-4 z-40 text-xs text-gray-400 select-none pointer-events-none" style="font-family:system-ui,sans-serif">
+        <span class="opacity-70">作者：宋林峰</span><span class="mx-1 opacity-40">|</span><span class="opacity-60">有BUG可及时向我反馈</span>
       </div>
       ${this.isReviewing ? this.renderLoadingOverlay() : ''}
       ${this.isPreviewing ? this.renderPreviewLoadingOverlay() : ''}
@@ -1697,6 +1741,13 @@ export class ReviewAssistant {
         <div class="bg-gradient-to-r from-red-600 to-orange-600 rounded-xl p-5 text-white">
           <div class="flex items-center gap-3"><div class="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center text-xl">👥</div><div><h2 class="text-lg font-bold">账号管理</h2><p class="text-red-100 text-xs">管理员专属：创建、修改、删除用户账号</p></div></div>
         </div>
+        <div id="dbStatsCard" class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2"><span class="text-sm">💾</span><h3 class="text-sm font-semibold text-gray-900">数据库存储</h3></div>
+            <button id="refreshDbStatsBtn" class="text-xs text-blue-600 hover:text-blue-800 transition-colors">🔄 刷新</button>
+          </div>
+          <div id="dbStatsContent" class="text-xs text-gray-500">加载中...</div>
+        </div>
         <div class="grid-layout">
           <div class="space-y-5">
             <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
@@ -2028,6 +2079,14 @@ export class ReviewAssistant {
     document.getElementById('searchWebTestBtn')?.addEventListener('click', async () => {
       const query = (document.getElementById('searchTestInput') as HTMLInputElement)?.value.trim(); if(!query){alert('请输入关键词');return;}
       const el = document.getElementById('searchTestResult'); if(el){el.classList.remove('hidden');el.textContent='搜索中...';el.textContent=await this.testWebSearch(query);}
+    });
+
+    // 数据库统计刷新
+    document.getElementById('refreshDbStatsBtn')?.addEventListener('click', () => {
+      const el = document.getElementById('dbStatsContent');
+      if (el) el.textContent = '加载中...';
+      this.dbStats = null;
+      this.loadDbStats();
     });
 
     // Admin 管理事件
