@@ -69,6 +69,11 @@ export class ReviewAssistant {
   // 文件预览模式：仅解析文件提取文本，不调用 LLM（零 Token 消耗）
   private previewContent: string | null = null;
   private isPreviewing = false;
+  // 批量审核：多个文件时逐个审核，结果用折叠面板展示
+  private batchResults: ReviewHistory[] = [];
+  private expandedBatchIndex: number = -1;
+  private batchTotal = 0;
+  private batchCompleted = 0;
 
   /**
    * 清理 PDF 提取文本中的 CJK 字符间多余空格
@@ -236,12 +241,13 @@ export class ReviewAssistant {
     if (el) el.innerText = msg;
   }
 
-  private async readFileContents(): Promise<{ name: string; content: string }[]> {
+  private async readFileContents(fileList?: FileItem[]): Promise<{ name: string; content: string }[]> {
     const results: { name: string; content: string }[] = [];
+    const filesToRead = fileList || this.files;
 
-    for (let idx = 0; idx < this.files.length; idx++) {
-      const f = this.files[idx];
-      this.updateLoadingStatus(`正在解析文件 ${idx + 1}/${this.files.length}：${f.name}`);
+    for (let idx = 0; idx < filesToRead.length; idx++) {
+      const f = filesToRead[idx];
+      this.updateLoadingStatus(`正在解析文件 ${idx + 1}/${filesToRead.length}：${f.name}`);
       try {
         const ext = f.name.split('.').pop()?.toLowerCase() || '';
 
@@ -393,188 +399,204 @@ export class ReviewAssistant {
   closePreview() { this.previewContent = null; this.render(); }
 
   async startReview() {
-    // 优先使用文本粘贴内容，其次使用文件上传
     const hasTextContent = this.textContent.trim().length > 0;
     const hasFiles = this.files.length > 0;
     if (!hasTextContent && !hasFiles) { alert('请先上传文件或粘贴文本内容'); return; }
 
-    console.log(`[审核] 开始审核，模式: ${hasTextContent ? '文本粘贴' : '文件上传'}, 文件数: ${this.files.length}, 文本长度: ${this.textContent.trim().length}`);
-    this.isReviewing = true; this.render();
+    // 判断是否为批量审核模式（多个文件）
+    const isBatch = hasFiles && this.files.length > 1 && !hasTextContent;
+
+    this.isReviewing = true;
+    this.batchResults = [];
+    this.expandedBatchIndex = -1;
+    this.batchTotal = isBatch ? this.files.length : 1;
+    this.batchCompleted = 0;
+    this.render();
     this.updateLoadingStatus('正在准备审核...');
 
     try {
-      let combinedContent = '';
+      if (isBatch) {
+        // ===== 批量审核：逐个文件提交 =====
+        for (let fileIdx = 0; fileIdx < this.files.length; fileIdx++) {
+          const fileItem = this.files[fileIdx];
+          this.updateLoadingStatus(`正在审核第 ${fileIdx + 1}/${this.files.length} 个文件：${fileItem.name}`);
+          console.log(`[批量审核] 审核第 ${fileIdx + 1}/${this.files.length} 个文件：${fileItem.name}`);
 
-      if (hasTextContent) {
-        combinedContent = this.textContent.trim();
-        this.originalFileContent = combinedContent;
-        console.log(`[审核] 文本粘贴模式，内容长度 ${combinedContent.length} 字符`);
-      } else {
-        console.log('[审核] 文件上传模式，开始解析文件...');
-        const fileContents = await this.readFileContents();
-        combinedContent = fileContents.map(f => `=== ${f.name} ===\n${f.content}`).join('\n\n---\n\n');
-        this.originalFileContent = combinedContent;
-        console.log(`[审核] 文件解析完成，合并后内容长度 ${combinedContent.length} 字符`);
-      }
+          try {
+            // 解析单个文件
+            const fileContents = await this.readFileContents([fileItem]);
+            let combinedContent = fileContents.map(f => f.content).join('\n');
+            this.originalFileContent = combinedContent;
 
-      // 前端截断保护
-      const MAX_FRONTEND_CHARS = 100000;
-      let wasTruncated = false;
-      if (combinedContent.length > MAX_FRONTEND_CHARS) {
-        const headLen = Math.floor(MAX_FRONTEND_CHARS * 0.8);
-        const tailLen = MAX_FRONTEND_CHARS - headLen;
-        combinedContent = combinedContent.substring(0, headLen)
-          + '\n\n[... 中间内容因长度限制已省略 ...]\n\n'
-          + combinedContent.substring(combinedContent.length - tailLen);
-        wasTruncated = true;
-        console.log(`[审核] 内容已截断至 ${MAX_FRONTEND_CHARS} 字符`);
-      }
-
-      const fileName = hasTextContent ? '粘贴文本内容' : this.files.map(f => f.name).join(', ');
-
-      // 构建审核请求
-      const reviewBody: Record<string, unknown> = {
-        fileName, fileContent: combinedContent, reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role,
-      };
-      const mc = this.moduleConstraints[this.reviewType];
-      if (mc && mc.mode === 'reference' && mc.fileContent) {
-        reviewBody.constraintMode = 'reference';
-        reviewBody.constraintContent = mc.fileContent;
-        reviewBody.constraintFileName = mc.fileName || '范文';
-      } else if (mc && mc.mode === 'rules' && mc.rules?.trim()) {
-        reviewBody.constraintMode = 'rules';
-        reviewBody.constraintContent = mc.rules.trim();
-      }
-
-      // === SSE 流式审核 ===
-      this.updateLoadingStatus('正在提交审核...');
-      console.log(`[审核] 提交到 /api/review (SSE模式)，类型=${this.reviewType}，模式=${this.reviewMode}，依据=${mc?.mode || 'none'}`);
-
-      const response = await fetch('/api/review', {
-        method: 'POST',
-        headers: { ...this.authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify(reviewBody),
-      });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({ error: '提交失败' }));
-        console.error('[审核] 提交失败:', errData);
-        alert(errData.error || '审核提交失败');
-        this.isReviewing = false; this.files = []; this.textContent = ''; this.render();
-        return;
-      }
-
-      // 读取 SSE 流
-      const reader = response.body?.getReader();
-      if (!reader) {
-        alert('浏览器不支持流式响应');
-        this.isReviewing = false; this.files = []; this.textContent = ''; this.render();
-        return;
-      }
-
-      const decoder = new TextDecoder();
-      let sseBuffer = '';
-      let finalResult: Record<string, unknown> | null = null;
-      let recordId = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        sseBuffer += decoder.decode(value, { stream: true });
-
-        // 解析 SSE 事件
-        const lines = sseBuffer.split('\n');
-        sseBuffer = '';
-
-        let currentEvent = '';
-        let currentData = '';
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.substring(7).trim();
-          } else if (line.startsWith('data: ')) {
-            currentData = line.substring(6);
-          } else if (line === '' && currentEvent && currentData) {
-            // 事件结束，处理
-            try {
-              const data = JSON.parse(currentData);
-
-              switch (currentEvent) {
-                case 'started':
-                  recordId = data.id as string;
-                  console.log(`[审核] 已启动，recordId=${recordId}`);
-                  break;
-
-                case 'progress':
-                  this.updateLoadingStatus(data.message as string || 'AI 审核中...');
-                  break;
-
-                case 'segment':
-                  this.updateLoadingStatus(`AI 审核中... (${data.segment}/${data.totalSegments} 段已完成)`);
-                  break;
-
-                case 'completed':
-                  finalResult = data.result as Record<string, unknown>;
-                  console.log('[审核] 审核完成，结果已获取');
-                  break;
-
-                case 'error':
-                  console.error('[审核] 服务端错误:', data.error);
-                  alert('审核失败：' + (data.error || '请稍后重试'));
-                  this.isReviewing = false; this.files = []; this.textContent = ''; await this.loadHistoryFromDB(); this.render();
-                  return;
-              }
-            } catch (parseErr) {
-              console.warn('[审核] SSE 解析错误:', parseErr);
+            // 截断保护
+            const MAX_CHARS = 100000;
+            if (combinedContent.length > MAX_CHARS) {
+              combinedContent = combinedContent.substring(0, Math.floor(MAX_CHARS * 0.8))
+                + '\n\n[... 中间内容因长度限制已省略 ...]\n\n'
+                + combinedContent.substring(combinedContent.length - Math.floor(MAX_CHARS * 0.2));
             }
 
-            currentEvent = '';
-            currentData = '';
-          } else if (line !== '' && !line.startsWith('event:') && !line.startsWith('data:')) {
-            // 不完整的行，放回缓冲区
-            sseBuffer = line + '\n';
-          }
-        }
-      }
+            const reviewBody: Record<string, unknown> = {
+              fileName: fileItem.name, fileContent: combinedContent,
+              reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role,
+            };
+            const mc = this.moduleConstraints[this.reviewType];
+            if (mc && mc.mode === 'reference' && mc.fileContent) {
+              reviewBody.constraintMode = 'reference';
+              reviewBody.constraintContent = mc.fileContent;
+              reviewBody.constraintFileName = mc.fileName || '范文';
+            } else if (mc && mc.mode === 'rules' && mc.rules?.trim()) {
+              reviewBody.constraintMode = 'rules';
+              reviewBody.constraintContent = mc.rules.trim();
+            }
 
-      if (finalResult) {
-        this.currentReview = { id: recordId, file_name: fileName, review_type: this.reviewType, review_mode: this.reviewMode, user_role: this.role, status: 'completed', result: finalResult as any, created_at: new Date().toISOString() };
-        const r = finalResult as any;
-        this.reviewMeta = r?._meta ? { knowledgeUsed: r._meta.knowledgeUsed, knowledgeChunks: r._meta.knowledgeChunks, knowledgeDatasets: r._meta.knowledgeDatasets, webSearchUsed: r._meta.webSearchUsed, webSearchResults: r._meta.webSearchResults } : null;
-        this.resultTab = 'comparison';
-        if (wasTruncated) { console.warn('[审核] 内容较长，已截取核心部分进行审核。'); }
-      } else if (recordId) {
-        // SSE 流结束但没收到 completed 事件，尝试从数据库获取结果
-        console.log('[审核] SSE 流结束但未收到结果，尝试从数据库获取...');
-        this.updateLoadingStatus('正在获取审核结果...');
-        try {
-          const pollResp = await this.fetchWithTimeout(`/api/reviews/${recordId}`, { headers: this.authHeaders() }, 10000);
-          const pollData = await pollResp.json();
-          if (pollData.success && pollData.data && pollData.data.status === 'completed') {
-            this.currentReview = pollData.data;
-            const r = pollData.data.result;
-            this.reviewMeta = r?._meta ? { knowledgeUsed: r._meta.knowledgeUsed, knowledgeChunks: r._meta.knowledgeChunks, knowledgeDatasets: r._meta.knowledgeDatasets, webSearchUsed: r._meta.webSearchUsed, webSearchResults: r._meta.webSearchResults } : null;
-            this.resultTab = 'comparison';
-          } else {
-            alert('审核超时，请稍后在历史记录中查看结果。');
+            // SSE 审核
+            const result = await this.doSSEReview(reviewBody, fileItem.name);
+            if (result) {
+              this.batchResults.push(result);
+              this.batchCompleted++;
+              // 默认展开第一个结果
+              if (this.batchResults.length === 1) this.expandedBatchIndex = 0;
+            }
+          } catch (fileErr) {
+            console.error(`[批量审核] 文件 ${fileItem.name} 审核失败:`, fileErr);
+            this.batchResults.push({
+              id: '', file_name: fileItem.name, review_type: this.reviewType,
+              review_mode: this.reviewMode, user_role: this.role, status: 'failed',
+              result: { conclusion: 'fail', score: 0, issues: [{ level: 'high', title: '审核失败', description: String(fileErr), suggestion: '请重试' }], suggestions: [], annotatedContent: '', details: '' },
+              created_at: new Date().toISOString(),
+            });
+            this.batchCompleted++;
           }
-        } catch {
-          alert('审核超时，请稍后在历史记录中查看结果。');
+          // 逐步渲染，显示已完成的进度
+          this.render();
         }
       } else {
-        alert('审核未完成，请重试。');
+        // ===== 单文件/文本审核 =====
+        let combinedContent = '';
+        if (hasTextContent) {
+          combinedContent = this.textContent.trim();
+          this.originalFileContent = combinedContent;
+        } else {
+          const fileContents = await this.readFileContents();
+          combinedContent = fileContents.map(f => `=== ${f.name} ===\n${f.content}`).join('\n\n---\n\n');
+          this.originalFileContent = combinedContent;
+        }
+
+        const MAX_CHARS = 100000;
+        if (combinedContent.length > MAX_CHARS) {
+          combinedContent = combinedContent.substring(0, Math.floor(MAX_CHARS * 0.8))
+            + '\n\n[... 中间内容因长度限制已省略 ...]\n\n'
+            + combinedContent.substring(combinedContent.length - Math.floor(MAX_CHARS * 0.2));
+        }
+
+        const fileName = hasTextContent ? '粘贴文本内容' : this.files.map(f => f.name).join(', ');
+        const reviewBody: Record<string, unknown> = {
+          fileName, fileContent: combinedContent, reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role,
+        };
+        const mc = this.moduleConstraints[this.reviewType];
+        if (mc && mc.mode === 'reference' && mc.fileContent) {
+          reviewBody.constraintMode = 'reference';
+          reviewBody.constraintContent = mc.fileContent;
+          reviewBody.constraintFileName = mc.fileName || '范文';
+        } else if (mc && mc.mode === 'rules' && mc.rules?.trim()) {
+          reviewBody.constraintMode = 'rules';
+          reviewBody.constraintContent = mc.rules.trim();
+        }
+
+        const result = await this.doSSEReview(reviewBody, fileName);
+        if (result) {
+          this.currentReview = result;
+          this.batchResults = [result];
+          this.expandedBatchIndex = 0;
+          this.resultTab = 'comparison';
+        }
       }
     } catch (err) {
       console.error('[审核] 审核异常:', err);
       const errMsg = err instanceof Error ? err.message : '网络异常';
-      if (errMsg.includes('Failed to fetch') || errMsg.includes('NetworkError') || errMsg.includes('abort')) {
-        alert('审核提交失败：网络连接异常。请刷新页面后重试。');
-      } else {
-        alert('审核失败：' + errMsg);
+      alert('审核失败：' + errMsg);
+    }
+    this.isReviewing = false; this.files = []; this.textContent = '';
+    await this.loadHistoryFromDB(); this.render();
+  }
+
+  /** 执行 SSE 流式审核，返回审核结果 */
+  private async doSSEReview(reviewBody: Record<string, unknown>, fileName: string): Promise<ReviewHistory | null> {
+    this.updateLoadingStatus(`正在提交审核：${fileName}...`);
+
+    const response = await fetch('/api/review', {
+      method: 'POST',
+      headers: { ...this.authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(reviewBody),
+    });
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({ error: '提交失败' }));
+      console.error('[审核] 提交失败:', errData);
+      throw new Error(errData.error || '审核提交失败');
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('浏览器不支持流式响应');
+
+    const decoder = new TextDecoder();
+    let sseBuffer = '';
+    let finalResult: Record<string, unknown> | null = null;
+    let recordId = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      sseBuffer += decoder.decode(value, { stream: true });
+
+      const lines = sseBuffer.split('\n');
+      sseBuffer = '';
+      let currentEvent = '';
+      let currentData = '';
+
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          currentEvent = line.substring(7).trim();
+        } else if (line.startsWith('data: ')) {
+          currentData = line.substring(6);
+        } else if (line === '' && currentEvent && currentData) {
+          try {
+            const data = JSON.parse(currentData);
+            switch (currentEvent) {
+              case 'started': recordId = data.id as string; break;
+              case 'progress': this.updateLoadingStatus(data.message as string || 'AI 审核中...'); break;
+              case 'segment': this.updateLoadingStatus(`AI 审核中... (${data.segment}/${data.totalSegments} 段已完成)`); break;
+              case 'completed': finalResult = data.result as Record<string, unknown>; break;
+              case 'error': throw new Error(data.error || '服务端错误');
+            }
+          } catch (parseErr) {
+            if (parseErr instanceof Error && parseErr.message !== '服务端错误') {
+              console.warn('[审核] SSE 解析错误:', parseErr);
+            } else { throw parseErr; }
+          }
+          currentEvent = ''; currentData = '';
+        } else if (line !== '' && !line.startsWith('event:') && !line.startsWith('data:')) {
+          sseBuffer = line + '\n';
+        }
       }
     }
-    this.isReviewing = false; this.files = []; this.textContent = ''; await this.loadHistoryFromDB(); this.render();
+
+    if (finalResult) {
+      return {
+        id: recordId, file_name: fileName, review_type: this.reviewType,
+        review_mode: this.reviewMode, user_role: this.role, status: 'completed',
+        result: finalResult as any, created_at: new Date().toISOString(),
+      };
+    } else if (recordId) {
+      // 降级：从数据库获取
+      try {
+        const pollResp = await this.fetchWithTimeout(`/api/reviews/${recordId}`, { headers: this.authHeaders() }, 10000);
+        const pollData = await pollResp.json();
+        if (pollData.success && pollData.data && pollData.data.status === 'completed') return pollData.data;
+      } catch { /* ignore */ }
+    }
+    return null;
   }
 
   async viewHistoryDetail(id: string) {
@@ -593,7 +615,7 @@ export class ReviewAssistant {
     } catch { console.error('删除失败'); }
   }
 
-  closeResult() { this.currentReview = null; this.reviewMeta = null; this.render(); }
+  closeResult() { this.currentReview = null; this.reviewMeta = null; this.batchResults = []; this.expandedBatchIndex = -1; this.render(); }
 
   // ==================== 知识库管理 ====================
   addKnowledgeEntry(entry: KnowledgeEntry) { this.knowledgeEntries.push(entry); this.render(); }
@@ -862,7 +884,7 @@ export class ReviewAssistant {
           ${this.renderUploadArea()} ${this.renderReviewSettings()} ${this.renderHistory()}
         </div>
         <div class="bg-white rounded-xl border border-gray-200 shadow-sm min-h-[600px]">
-          ${this.previewContent ? this.renderPreview() : this.currentReview ? this.renderResult() : this.renderEmptyState()}
+          ${this.previewContent ? this.renderPreview() : (this.currentReview || this.batchResults.length > 1) ? this.renderResult() : this.renderEmptyState()}
         </div>
       </div>
     `;
@@ -953,7 +975,7 @@ export class ReviewAssistant {
           </div>
         </div>
         <button id="startReviewBtn" class="w-full mt-4 py-2.5 px-4 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-lg font-medium hover:from-blue-700 hover:to-blue-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm" ${this.files.length===0 && this.textContent.trim().length===0?'disabled':''}>
-          开始审核 ${this.files.length>0?`(${this.files.length}个文件)`:this.textContent.trim()?'(文本内容)':''}
+          开始审核 ${this.files.length>1?`批量审核 ${this.files.length} 个文件`:this.files.length===1?'(1个文件)':this.textContent.trim()?'(文本内容)':''}
         </button>
       </div>
     `;
@@ -1046,36 +1068,122 @@ export class ReviewAssistant {
 
   // ==================== 审核结果 ====================
   private renderResult(): string {
+    // 批量审核模式：折叠面板
+    if (this.batchResults.length > 1) return this.renderBatchResults();
+
+    // 单文件模式
     const review = this.currentReview!; const result = review.result;
     if (!result) return `<div class="h-full flex items-center justify-center"><p class="text-gray-500">加载中...</p></div>`;
-    const cm: Record<string,{text:string;icon:string;color:string;bg:string}> = {pass:{text:'审核通过',icon:'✅',color:'text-green-600',bg:'bg-green-50'},fail:{text:'审核未通过',icon:'❌',color:'text-red-600',bg:'bg-red-50'},warning:{text:'需要整改',icon:'⚠️',color:'text-yellow-600',bg:'bg-yellow-50'}};
+    const cm: Record<string,{text:string;icon:string;color:string;bg:string}> = {pass:{text:'审核通过',icon:'\u2705',color:'text-green-600',bg:'bg-green-50'},fail:{text:'审核未通过',icon:'\u274c',color:'text-red-600',bg:'bg-red-50'},warning:{text:'需要整改',icon:'\u26a0\ufe0f',color:'text-yellow-600',bg:'bg-yellow-50'}};
     const c = cm[result.conclusion] || cm.warning;
     return `
       <div class="h-full flex flex-col">
         <div class="p-4 border-b border-gray-200">
           <div class="flex items-center justify-between mb-2">
-            <div class="flex items-center gap-2"><div class="w-10 h-10 ${c.bg} rounded-full flex items-center justify-center text-lg">${c.icon}</div><div><h3 class="font-semibold ${c.color}">${c.text}</h3><p class="text-xs text-gray-500">${REVIEW_TYPES[review.review_type as ReviewType]?.label||''} · ${REVIEW_MODES[review.review_mode as ReviewMode]?.label||''}</p></div></div>
-            <div class="flex items-center gap-2"><button id="downloadReportBtn" class="px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-50">📥 下载</button><button id="closeResultBtn" class="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500">✕</button></div>
+            <div class="flex items-center gap-2"><div class="w-10 h-10 ${c.bg} rounded-full flex items-center justify-center text-lg">${c.icon}</div><div><h3 class="font-semibold ${c.color}">${c.text}</h3><p class="text-xs text-gray-500">${REVIEW_TYPES[review.review_type as ReviewType]?.label||''} \xb7 ${REVIEW_MODES[review.review_mode as ReviewMode]?.label||''}</p></div></div>
+            <div class="flex items-center gap-2"><button id="downloadReportBtn" class="px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-50">\ud83d\udce5 下载</button><button id="closeResultBtn" class="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500">\u2715</button></div>
           </div>
           <div class="flex items-center gap-3 flex-wrap">
             <div class="flex items-center gap-1.5"><span class="text-xs text-gray-600">评分</span><span class="text-lg font-bold ${result.score>=80?'text-green-600':result.score>=60?'text-yellow-600':'text-red-600'}">${result.score}</span></div>
             <div class="flex-1 bg-gray-100 rounded-full h-1.5 max-w-[150px]"><div class="h-1.5 rounded-full ${result.score>=80?'bg-green-500':result.score>=60?'bg-yellow-500':'bg-red-500'}" style="width:${result.score}%"></div></div>
             ${this.renderKnowledgeSourceBadges()}
           </div>
-          ${(result as any)._totalSegments > 1 ? `<div class="mt-1.5 px-2.5 py-1.5 bg-blue-50 rounded-lg flex items-center gap-2 text-xs"><span class="text-blue-600">📄 全文分段审核</span><span class="text-gray-600">共 ${(result as any)._totalSegments} 段，每段独立审核后合并结果，全文覆盖无遗漏</span></div>` : ''}
+          ${(result as any)._totalSegments > 1 ? `<div class="mt-1.5 px-2.5 py-1.5 bg-blue-50 rounded-lg flex items-center gap-2 text-xs"><span class="text-blue-600">\ud83d\udcc4 全文分段审核</span><span class="text-gray-600">共 ${(result as any)._totalSegments} 段，每段独立审核后合并结果，全文覆盖无遗漏</span></div>` : ''}
         </div>
         <div class="px-4 pt-2 flex gap-2 border-b border-gray-200 overflow-x-auto">
-		          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='comparison'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="comparison">📋 对比标注</button>
-		          ${(result.issues && result.issues.length > 0) ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='issues'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="issues">问题 (${result.issues.length})</button>` : ''}
-		          ${result.details ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='details'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="details">分析</button>` : ''}
-		          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='references'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="references">来源</button>
+			          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='comparison'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="comparison">\ud83d\udccb 对比标注</button>
+			          ${(result.issues && result.issues.length > 0) ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='issues'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="issues">问题 (${result.issues.length})</button>` : ''}
+			          ${result.details ? `<button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='details'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="details">分析</button>` : ''}
+			          <button class="result-tab px-2.5 py-1.5 text-xs font-medium border-b-2 ${this.resultTab==='references'?'border-blue-600 text-blue-600':'border-transparent text-gray-500'}" data-tab="references">来源</button>
         </div>
         <div class="flex-1 overflow-y-auto p-4">
           <div id="tab-comparison" class="tab-content ${this.resultTab==='comparison'?'':'hidden'}">${this.renderComparisonView(result)}</div>
-          <div id="tab-issues" class="tab-content ${this.resultTab==='issues'?'':'hidden'}">${!result.issues||result.issues.length===0?'<div class="text-center py-10 text-gray-500"><div class="text-3xl mb-2">✨</div><p class="text-sm">未发现问题</p></div>':`<div class="space-y-3">${result.issues.map(i=>this.renderIssue(i)).join('')}</div>`}</div>
+          <div id="tab-issues" class="tab-content ${this.resultTab==='issues'?'':'hidden'}">${!result.issues||result.issues.length===0?'<div class="text-center py-10 text-gray-500"><div class="text-3xl mb-2">\u2728</div><p class="text-sm">未发现问题</p></div>':`<div class="space-y-3">${result.issues.map(i=>this.renderIssue(i)).join('')}</div>`}</div>
           <div id="tab-details" class="tab-content ${this.resultTab==='details'?'':'hidden'}"><div class="bg-gray-50 rounded-lg p-3 text-sm text-gray-700 whitespace-pre-wrap">${result.details||'暂无详细分析'}</div></div>
           <div id="tab-references" class="tab-content ${this.resultTab==='references'?'':'hidden'}">${this.renderReferencesTab(result)}</div>
         </div>
+      </div>
+    `;
+  }
+
+  /** 批量审核结果：折叠面板（手风琴） */
+  private renderBatchResults(): string {
+    const results = this.batchResults;
+    const isStillRunning = this.isReviewing;
+    const completedCount = results.length;
+    const totalCount = this.batchTotal;
+    const avgScore = completedCount > 0 ? Math.round(results.reduce((sum, r) => sum + (r.result?.score || 0), 0) / completedCount) : 0;
+    const totalIssues = results.reduce((sum, r) => sum + (r.result?.issues?.length || 0), 0);
+
+    return `
+      <div class="h-full flex flex-col">
+        <div class="p-4 border-b border-gray-200">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+              <div class="w-10 h-10 bg-blue-50 rounded-full flex items-center justify-center text-lg">\ud83d\udcc1</div>
+              <div>
+                <h3 class="font-semibold text-gray-800">批量审核${isStillRunning ? '中' : '完成'}</h3>
+                <p class="text-xs text-gray-500">${REVIEW_TYPES[this.reviewType]?.label||''} \xb7 ${completedCount}/${totalCount} 文件</p>
+              </div>
+            </div>
+            <button id="closeResultBtn" class="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-500">\u2715</button>
+          </div>
+          <div class="flex items-center gap-3 flex-wrap">
+            <div class="flex items-center gap-1.5"><span class="text-xs text-gray-600">平均评分</span><span class="text-lg font-bold ${avgScore>=80?'text-green-600':avgScore>=60?'text-yellow-600':'text-red-600'}">${avgScore}</span></div>
+            <div class="flex items-center gap-1.5"><span class="text-xs text-gray-600">总问题数</span><span class="text-sm font-bold text-gray-800">${totalIssues}</span></div>
+            ${isStillRunning ? `<div class="flex items-center gap-1.5 text-xs text-blue-600"><div class="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>审核中...</div>` : ''}
+          </div>
+        </div>
+        <div class="flex-1 overflow-y-auto p-4 space-y-2">
+          ${results.map((r, i) => this.renderBatchItem(r, i)).join('')}
+          ${isStillRunning && completedCount < totalCount ? `
+            <div class="border border-dashed border-gray-300 rounded-xl p-4 text-center">
+              <div class="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+              <p class="text-xs text-gray-500">正在审核第 ${completedCount + 1}/${totalCount} 个文件...</p>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }
+
+  /** 渲染单个批量审核结果项（折叠面板） */
+  private renderBatchItem(review: ReviewHistory, index: number): string {
+    const result = review.result;
+    const isExpanded = this.expandedBatchIndex === index;
+    const cm: Record<string,{text:string;icon:string;color:string;bg:string}> = {pass:{text:'通过',icon:'\u2705',color:'text-green-600',bg:'bg-green-50'},fail:{text:'未通过',icon:'\u274c',color:'text-red-600',bg:'bg-red-50'},warning:{text:'需整改',icon:'\u26a0\ufe0f',color:'text-yellow-600',bg:'bg-yellow-50'}};
+    const c = result ? (cm[result.conclusion] || cm.warning) : {text:'失败',icon:'\u274c',color:'text-red-600',bg:'bg-red-50'};
+    const score = result?.score || 0;
+    const issueCount = result?.issues?.length || 0;
+    const fileName = review.file_name || '未知文件';
+
+    return `
+      <div class="border ${isExpanded ? 'border-blue-300 shadow-md' : 'border-gray-200'} rounded-xl overflow-hidden transition-all">
+        <div class="batch-item-header flex items-center justify-between p-3 cursor-pointer hover:bg-gray-50 select-none" data-batch-index="${index}">
+          <div class="flex items-center gap-2.5 flex-1 min-w-0">
+            <div class="w-8 h-8 ${c.bg} rounded-lg flex items-center justify-center text-sm flex-shrink-0">${c.icon}</div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-medium text-gray-900 truncate">${fileName}</span>
+                <span class="text-xs px-1.5 py-0.5 rounded ${c.color} ${c.bg} font-medium flex-shrink-0">${c.text}</span>
+              </div>
+              <div class="flex items-center gap-2 mt-0.5">
+                <span class="text-xs text-gray-500">评分 <span class="font-bold ${score>=80?'text-green-600':score>=60?'text-yellow-600':'text-red-600'}">${score}</span></span>
+                <span class="text-xs text-gray-400">|</span>
+                <span class="text-xs text-gray-500">${issueCount} 个问题</span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 flex-shrink-0 ml-2">
+            <button class="download-batch-btn px-2 py-1 text-xs text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded" data-batch-index="${index}" title="下载报告">\ud83d\udce5</button>
+            <svg class="w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </div>
+        </div>
+        ${isExpanded && result ? `
+          <div class="border-t border-gray-100">
+            <div class="p-3">${this.renderComparisonView(result)}</div>
+          </div>
+        ` : ''}
       </div>
     `;
   }
@@ -1716,6 +1824,37 @@ export class ReviewAssistant {
       for (const cat of catOrder) { if(!issuesByCat[cat]||issuesByCat[cat].length===0) continue; issueReport += `\n${catNames[cat]||cat}（${issuesByCat[cat].length}项）\n${'─'.repeat(30)}\n`; issuesByCat[cat].forEach((i: Issue,n: number) => { issueReport += `${n+1}. ${i.title}${i.location?' ('+i.location+')':''}\n   ${i.description}${i.suggestion?'\n   建议：'+i.suggestion:''}\n`; }); }
       const report = `辰溪工程文件审核助手 - 审核报告\n========================================\n\n审核类型：${REVIEW_TYPES[review!.review_type as ReviewType]?.label}\n审核模式：${REVIEW_MODES[review!.review_mode as ReviewMode]?.label}\n文件名称：${review!.file_name}\n审核时间：${new Date(review!.created_at).toLocaleString('zh-CN')}\n知识来源：${sourceStr}\n\n审核结论：${result.conclusion==='pass'?'通过':result.conclusion==='fail'?'未通过':'需整改'}\n综合评分：${result.score}/100\n${issueReport||'\n未发现问题\n'}\n========================================\n辰溪工程文件审核助手 自动生成`.trim();
       const blob = new Blob([report],{type:'text/plain;charset=utf-8'}); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href=url; link.download=`审核报告_${new Date().toISOString().slice(0,10)}.txt`; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url);
+    });
+
+    // 批量审核：折叠面板展开/折叠
+    document.querySelectorAll('.batch-item-header').forEach(header => {
+      header.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+        // 如果点击的是下载按钮，不切换折叠
+        if (target.closest('.download-batch-btn')) return;
+        const idx = parseInt((header as HTMLElement).dataset.batchIndex || '0');
+        this.expandedBatchIndex = this.expandedBatchIndex === idx ? -1 : idx;
+        this.render();
+      });
+    });
+
+    // 批量审核：单个文件下载报告
+    document.querySelectorAll('.download-batch-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt((btn as HTMLElement).dataset.batchIndex || '0');
+        const review = this.batchResults[idx];
+        if (!review?.result) return;
+        const result = review.result;
+        const catNames: Record<string,string> = {format:'格式错误',typo:'错别字与表述错误',outdated_standard:'过期规范引用',non_compliant:'技术参数不合规',missing:'内容缺失',other:'其他问题'};
+        const issuesByCat: Record<string,typeof result.issues> = {};
+        (result.issues||[]).forEach((i: Issue) => { const c = i.category||'other'; if(!issuesByCat[c]) issuesByCat[c]=[]; issuesByCat[c].push(i); });
+        const catOrder = ['format','typo','outdated_standard','non_compliant','missing','other'];
+        let issueReport = '';
+        for (const cat of catOrder) { if(!issuesByCat[cat]||issuesByCat[cat].length===0) continue; issueReport += `\n${catNames[cat]||cat}（${issuesByCat[cat].length}项）\n${'─'.repeat(30)}\n`; issuesByCat[cat].forEach((i: Issue,n: number) => { issueReport += `${n+1}. ${i.title}${i.location?' ('+i.location+')':''}\n   ${i.description}${i.suggestion?'\n   建议：'+i.suggestion:''}\n`; }); }
+        const report = `辰溪工程文件审核助手 - 审核报告\n========================================\n\n文件名称：${review.file_name}\n审核类型：${REVIEW_TYPES[review.review_type as ReviewType]?.label}\n审核时间：${new Date(review.created_at).toLocaleString('zh-CN')}\n\n审核结论：${result.conclusion==='pass'?'通过':result.conclusion==='fail'?'未通过':'需整改'}\n综合评分：${result.score}/100\n${issueReport||'\n未发现问题\n'}\n========================================\n辰溪工程文件审核助手 自动生成`.trim();
+        const blob = new Blob([report],{type:'text/plain;charset=utf-8'}); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href=url; link.download=`审核报告_${review.file_name}_${new Date().toISOString().slice(0,10)}.txt`; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url);
+      });
     });
 
     // 知识库管理事件
