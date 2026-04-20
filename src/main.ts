@@ -1118,13 +1118,90 @@ export class ReviewAssistant {
       outdated_standard: {icon: '📜', title: '过期规范引用', sectionClass: 'border-purple-200 bg-purple-50/30', headerClass: 'text-purple-800 bg-purple-100', itemBorder: 'border-purple-100', itemBg: 'bg-white'},
       non_compliant: {icon: '⛔', title: '技术参数不合规', sectionClass: 'border-red-300 bg-red-50/30', headerClass: 'text-red-800 bg-red-100', itemBorder: 'border-red-100', itemBg: 'bg-white'},
       missing: {icon: '❗', title: '内容缺失', sectionClass: 'border-amber-200 bg-amber-50/30', headerClass: 'text-amber-800 bg-amber-100', itemBorder: 'border-amber-100', itemBg: 'bg-white'},
-      other: {icon: '⚠️', title: '其他问题', sectionClass: 'border-yellow-200 bg-yellow-50/30', headerClass: 'text-yellow-800 bg-yellow-100', itemBorder: 'border-yellow-100', itemBg: 'bg-white'},
+      other: {icon: '⚠️', title: '其他问题与提醒', sectionClass: 'border-yellow-200 bg-yellow-50/30', headerClass: 'text-yellow-800 bg-yellow-100', itemBorder: 'border-yellow-100', itemBg: 'bg-white'},
     };
 
-    // 按类别分组
+    // 从 annotatedContent 中提取标注，补充 issues 中遗漏的条目
+    const allIssues = [...issues];
+    if (annotated) {
+      // 提取各类标注
+      const typoAnnotations = [...annotated.matchAll(/【🔴错别字：应改为"([^"]+)"】/g)];
+      const outdatedAnnotations = [...annotated.matchAll(/【❌过期规范：([^】]+)】/g)];
+      const nonCompliantAnnotations = [...annotated.matchAll(/【❌参数不合规：([^】]+)】/g)];
+      const formatAnnotations = [...annotated.matchAll(/【❌格式错误：([^】]+)】/g)];
+      const errorAnnotations = [...annotated.matchAll(/【❌问题：([^】]+)】/g)];
+      const warnAnnotations = [...annotated.matchAll(/【⚠️提醒：([^】]+)】/g)];
+
+      // 检查每个标注是否在 issues 中有对应条目
+      const issueTitles = new Set(issues.map(i => i.title.toLowerCase()));
+      const issueDescs = new Set(issues.map(i => (i.description || '').toLowerCase()));
+
+      const hasMatchingIssue = (text: string): boolean => {
+        const lower = text.toLowerCase();
+        for (const t of issueTitles) { if (lower.includes(t) || t.includes(lower)) return true; }
+        for (const d of issueDescs) { if (d && (lower.includes(d) || d.includes(lower))) return true; }
+        return false;
+      };
+
+      // 找到标注附近的页码标记
+      const findNearbyPage = (index: number): string => {
+        const before = annotated.substring(Math.max(0, index - 500), index);
+        const pageMatch = before.match(/【第(\d+)页】[^【]*$/);
+        return pageMatch ? `第${pageMatch[1]}页` : '';
+      };
+
+      // 补充遗漏的错别字
+      for (const m of typoAnnotations) {
+        if (!hasMatchingIssue(m[1])) {
+          // 尝试找到被标注的错别字原文
+          const idx = m.index || 0;
+          const before = annotated.substring(Math.max(0, idx - 20), idx);
+          const charMatch = before.match(/([^\s【】]{1,10})$/);
+          const wrongChar = charMatch ? charMatch[1] : '错别字';
+          allIssues.push({ level: 'low', category: 'typo', title: `${wrongChar}→${m[1]}`, description: `错误内容：${wrongChar}，正确内容：${m[1]}`, location: findNearbyPage(idx), suggestion: `将"${wrongChar}"改为"${m[1]}"` });
+        }
+      }
+      // 补充遗漏的过期规范
+      for (const m of outdatedAnnotations) {
+        if (!hasMatchingIssue(m[1])) {
+          const idx = m.index || 0;
+          allIssues.push({ level: 'high', category: 'outdated_standard', title: '过期规范', description: m[1], location: findNearbyPage(idx), suggestion: '更新为现行规范版本' });
+        }
+      }
+      // 补充遗漏的参数不合规
+      for (const m of nonCompliantAnnotations) {
+        if (!hasMatchingIssue(m[1])) {
+          const idx = m.index || 0;
+          allIssues.push({ level: 'high', category: 'non_compliant', title: '参数不合规', description: m[1], location: findNearbyPage(idx), suggestion: '按现行标准修正参数' });
+        }
+      }
+      // 补充遗漏的格式错误
+      for (const m of formatAnnotations) {
+        if (!hasMatchingIssue(m[1])) {
+          const idx = m.index || 0;
+          allIssues.push({ level: 'medium', category: 'format', title: '格式错误', description: m[1], location: findNearbyPage(idx), suggestion: '按规范修正格式' });
+        }
+      }
+      // 补充遗漏的问题标注
+      for (const m of errorAnnotations) {
+        if (!hasMatchingIssue(m[1])) {
+          const idx = m.index || 0;
+          allIssues.push({ level: 'medium', category: 'other', title: m[1].substring(0, 30), description: m[1], location: findNearbyPage(idx), suggestion: '请核实并修正' });
+        }
+      }
+      // 补充遗漏的提醒标注
+      for (const m of warnAnnotations) {
+        if (!hasMatchingIssue(m[1])) {
+          const idx = m.index || 0;
+          allIssues.push({ level: 'low', category: 'other', title: '提醒', description: m[1], location: findNearbyPage(idx), suggestion: '请关注此提醒' });
+        }
+      }
+    }
+
+    // 按类别分组（使用合并后的 allIssues）
     const categorizedIssues: Record<string, Issue[]> = {};
     const uncategorized: Issue[] = [];
-    for (const issue of issues) {
+    for (const issue of allIssues) {
       const cat = issue.category || '';
       if (cat && categoryConfig[cat]) {
         if (!categorizedIssues[cat]) categorizedIssues[cat] = [];
@@ -1207,13 +1284,14 @@ export class ReviewAssistant {
     // 渲染分类区块
     let rightPanelHtml = '';
     
-    // 总结统计
+    // 总结统计（基于合并后的 allIssues）
     const stats = [
       {label: '格式错误', count: categorizedIssues.format?.length || 0, color: 'text-red-700 bg-red-50'},
       {label: '错别字', count: categorizedIssues.typo?.length || 0, color: 'text-orange-700 bg-orange-50'},
       {label: '过期规范', count: categorizedIssues.outdated_standard?.length || 0, color: 'text-purple-700 bg-purple-50'},
       {label: '参数不合规', count: categorizedIssues.non_compliant?.length || 0, color: 'text-red-700 bg-red-50'},
       {label: '内容缺失', count: categorizedIssues.missing?.length || 0, color: 'text-amber-700 bg-amber-50'},
+      {label: '其他/提醒', count: categorizedIssues.other?.length || 0, color: 'text-yellow-700 bg-yellow-50'},
     ].filter(s => s.count > 0);
 
     if (stats.length > 0) {
@@ -1250,8 +1328,8 @@ export class ReviewAssistant {
         </div>`;
     }
 
-    // 如果没有问题
-    if (issues.length === 0 && annotated) {
+    // 如果没有任何问题
+    if (allIssues.length === 0 && annotated) {
       rightPanelHtml = `<div class="text-center py-8 text-gray-500"><div class="text-3xl mb-2">✅</div><p class="text-sm font-medium">未发现明显问题</p><p class="text-xs mt-1">建议使用"详细审核"模式进行更深入检查</p></div>`;
     }
 
