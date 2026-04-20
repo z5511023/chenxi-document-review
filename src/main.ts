@@ -1588,10 +1588,6 @@ export class ReviewAssistant {
 
   // ==================== 知识库 Tab ====================
   private renderKnowledgeTab(): string {
-    const moduleOptions = this.knowledgeModules.length > 0
-      ? this.knowledgeModules.map((m: {id: string, name: string}) => `<option value="${m.id}">${m.name}</option>`).join('')
-      : '<option value="">暂无模块</option>';
-
     return `
       <div class="space-y-5">
         <div class="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-5 text-white">
