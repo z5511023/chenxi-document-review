@@ -218,7 +218,13 @@ issues 是审查结果的核心输出，必须按以下格式严格填写：
 
 5. location 页码标注要求：
    文件文本中包含【第N页】格式的页码标记，location字段必须标注页码，格式为"第X页"或"第X-Y页"。
-   这对审查人在上百页文档中快速定位问题至关重要，必须标注！`;
+   这对审查人在上百页文档中快速定位问题至关重要，必须标注！
+   
+6. 【严禁编造页码】location字段只能基于文本中实际存在的【第N页】标记来确定页码！
+   - 如果问题附近的页码标记是【第5页】，则location写"第5页"
+   - 绝对不能凭印象、推测或编造页码！如果不确定在哪一页，宁可不填location，也不能填错误页码
+   - 错误示例：文本中只有【第1页】【第3页】【第5页】的标记，但location写了"第4页"（这是编造的）
+   - 正确示例：问题出现在【第3页】和【第5页】标记之间，则location写"第3页"`;
 
 Object.keys(REVIEW_PROMPTS).forEach((key) => {
   REVIEW_PROMPTS[key] += TYPO_CHECK_INSTRUCTION;
@@ -479,13 +485,12 @@ function mergeSegmentResults(
       worstConclusion = conclusion;
     }
 
-    // 合并问题，标注来源段
+    // 合并问题，标注来源段（不设置默认页码，由前端从 annotatedContent 提取）
     const issues = (seg.issues as Array<Record<string, unknown>>) || [];
     for (const issue of issues) {
       allIssues.push({
         ...issue,
         title: `[${segTitle}] ${issue.title}`,
-        location: issue.location || `第${segNum}段`,
       });
     }
 
@@ -1105,6 +1110,43 @@ ${constraintContent}`;
 			    }
 
 			    const result = mergeSegmentResults(segmentResults, fileContent, skipped);
+
+			    // 页码验证：确保 LLM 输出的页码与文本中实际的【第N页】标记一致，防止幻觉页码
+			    const validPageNumbers = new Set<number>();
+			    const pageMarkerRegex = /【第(\d+)页】/g;
+			    let pm;
+			    while ((pm = pageMarkerRegex.exec(fileContent)) !== null) {
+			      validPageNumbers.add(parseInt(pm[1], 10));
+			    }
+			    const annotatedText = (result.annotatedContent as string) || '';
+			    pageMarkerRegex.lastIndex = 0;
+			    while ((pm = pageMarkerRegex.exec(annotatedText)) !== null) {
+			      validPageNumbers.add(parseInt(pm[1], 10));
+			    }
+			    const validPagesArr = Array.from(validPageNumbers).sort((a, b) => a - b);
+			    console.log(`[页码验证] 文本中存在的页码标记: [${validPagesArr.join(',')}]`);
+
+			    const issues = (result.issues as Array<Record<string, unknown>>) || [];
+			    let correctedCount = 0;
+			    for (const issue of issues) {
+			      const loc = (issue.location as string) || '';
+			      const pageNums = [...loc.matchAll(/第(\d+)页/g)].map(m => parseInt(m[1], 10));
+			      if (pageNums.length > 0) {
+			        const hasInvalid = pageNums.some(p => !validPageNumbers.has(p));
+			        if (hasInvalid) {
+			          const validNums = pageNums.filter(p => validPageNumbers.has(p));
+			          if (validNums.length > 0) {
+			            issue.location = validNums.map(p => `第${p}页`).join('-');
+			          } else {
+			            issue.location = '';
+			          }
+			          correctedCount++;
+			        }
+			      }
+			    }
+			    if (correctedCount > 0) {
+			      console.log(`[页码验证] 修正了 ${correctedCount} 个幻觉页码`);
+			    }
 			    console.log(`[分段审核] 合并完成，最终评分: ${result.score}，问题数: ${(result.issues as Array<unknown>)?.length || 0}`);
 
 			    (result as any)._meta = {

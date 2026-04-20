@@ -1241,26 +1241,55 @@ export class ReviewAssistant {
       const warnAnnotations = [...annotated.matchAll(/【⚠️提醒：([^】]+)】/g)];
 
       // 检查每个标注是否在 issues 中有对应条目
-      const issueTitles = new Set(issues.map(i => i.title.toLowerCase()));
-      const issueDescs = new Set(issues.map(i => (i.description || '').toLowerCase()));
+      // 按类别分别构建匹配集，避免跨类误匹配
+      const typoIssueTitles = new Set(issues.filter(i => i.category === 'typo').map(i => i.title.toLowerCase()));
+      const outdatedIssueDescs = new Set(issues.filter(i => i.category === 'outdated_standard').map(i => (i.description || '').toLowerCase()));
+      const nonCompliantIssueDescs = new Set(issues.filter(i => i.category === 'non_compliant').map(i => (i.description || '').toLowerCase()));
+      const formatIssueDescs = new Set(issues.filter(i => i.category === 'format').map(i => (i.description || '').toLowerCase()));
+      const otherIssueDescs = new Set(issues.filter(i => i.category === 'other').map(i => (i.description || '').toLowerCase()));
 
-      const hasMatchingIssue = (text: string): boolean => {
-        const lower = text.toLowerCase();
-        for (const t of issueTitles) { if (lower.includes(t) || t.includes(lower)) return true; }
-        for (const d of issueDescs) { if (d && (lower.includes(d) || d.includes(lower))) return true; }
+      // 严格匹配：只在同类 issue 中匹配，且要求关键词长度≥2
+      const hasTypoMatch = (correctChar: string): boolean => {
+        if (correctChar.length < 2) return false; // 单字太短，不做模糊匹配
+        for (const t of typoIssueTitles) { if (t.includes(correctChar.toLowerCase())) return true; }
+        return false;
+      };
+      const hasOutdatedMatch = (desc: string): boolean => {
+        const lower = desc.toLowerCase();
+        for (const d of outdatedIssueDescs) { if (d && lower.length >= 4 && d.includes(lower.substring(0, Math.min(lower.length, 20)))) return true; }
+        return false;
+      };
+      const hasNonCompliantMatch = (desc: string): boolean => {
+        const lower = desc.toLowerCase();
+        for (const d of nonCompliantIssueDescs) { if (d && lower.length >= 4 && d.includes(lower.substring(0, Math.min(lower.length, 20)))) return true; }
+        return false;
+      };
+      const hasFormatMatch = (desc: string): boolean => {
+        const lower = desc.toLowerCase();
+        for (const d of formatIssueDescs) { if (d && lower.length >= 4 && d.includes(lower.substring(0, Math.min(lower.length, 20)))) return true; }
+        return false;
+      };
+      const hasOtherMatch = (desc: string): boolean => {
+        const lower = desc.toLowerCase();
+        for (const d of otherIssueDescs) { if (d && lower.length >= 4 && d.includes(lower.substring(0, Math.min(lower.length, 20)))) return true; }
         return false;
       };
 
-      // 找到标注附近的页码标记
+      // 找到标注附近的页码标记（搜索范围扩大到2000字符，确保跨页找到标记）
       const findNearbyPage = (index: number): string => {
-        const before = annotated.substring(Math.max(0, index - 500), index);
-        const pageMatch = before.match(/【第(\d+)页】[^【]*$/);
-        return pageMatch ? `第${pageMatch[1]}页` : '';
+        const before = annotated.substring(Math.max(0, index - 2000), index);
+        // 找最后一个【第N页】标记
+        const pageMatches = [...before.matchAll(/【第(\d+)页】/g)];
+        if (pageMatches.length > 0) {
+          const lastMatch = pageMatches[pageMatches.length - 1];
+          return `第${lastMatch[1]}页`;
+        }
+        return '';
       };
 
       // 补充遗漏的错别字
       for (const m of typoAnnotations) {
-        if (!hasMatchingIssue(m[1])) {
+        if (!hasTypoMatch(m[1])) {
           // 尝试找到被标注的错别字原文
           const idx = m.index || 0;
           const before = annotated.substring(Math.max(0, idx - 20), idx);
@@ -1271,37 +1300,59 @@ export class ReviewAssistant {
       }
       // 补充遗漏的过期规范
       for (const m of outdatedAnnotations) {
-        if (!hasMatchingIssue(m[1])) {
+        if (!hasOutdatedMatch(m[1])) {
           const idx = m.index || 0;
           allIssues.push({ level: 'high', category: 'outdated_standard', title: '过期规范', description: m[1], location: findNearbyPage(idx), suggestion: '更新为现行规范版本' });
         }
       }
       // 补充遗漏的参数不合规
       for (const m of nonCompliantAnnotations) {
-        if (!hasMatchingIssue(m[1])) {
+        if (!hasNonCompliantMatch(m[1])) {
           const idx = m.index || 0;
           allIssues.push({ level: 'high', category: 'non_compliant', title: '参数不合规', description: m[1], location: findNearbyPage(idx), suggestion: '按现行标准修正参数' });
         }
       }
       // 补充遗漏的格式错误
       for (const m of formatAnnotations) {
-        if (!hasMatchingIssue(m[1])) {
+        if (!hasFormatMatch(m[1])) {
           const idx = m.index || 0;
           allIssues.push({ level: 'medium', category: 'format', title: '格式错误', description: m[1], location: findNearbyPage(idx), suggestion: '按规范修正格式' });
         }
       }
       // 补充遗漏的问题标注
       for (const m of errorAnnotations) {
-        if (!hasMatchingIssue(m[1])) {
+        if (!hasOtherMatch(m[1])) {
           const idx = m.index || 0;
           allIssues.push({ level: 'medium', category: 'other', title: m[1].substring(0, 30), description: m[1], location: findNearbyPage(idx), suggestion: '请核实并修正' });
         }
       }
       // 补充遗漏的提醒标注
       for (const m of warnAnnotations) {
-        if (!hasMatchingIssue(m[1])) {
+        if (!hasOtherMatch(m[1])) {
           const idx = m.index || 0;
           allIssues.push({ level: 'low', category: 'other', title: '提醒', description: m[1], location: findNearbyPage(idx), suggestion: '请关注此提醒' });
+        }
+      }
+
+      // 为 LLM issues 中缺少 location 的条目，从 annotatedContent 中根据关键词查找页码
+      for (const issue of allIssues) {
+        if (issue.location) continue; // 已有页码，跳过
+        // 提取 title 中的关键词（去除段标记如"[正文段落]"）
+        const cleanTitle = issue.title.replace(/^\[.*?\]\s*/, '');
+        const keywords = [cleanTitle];
+        // 对于过期规范，额外提取编号关键词
+        if (issue.category === 'outdated_standard' || cleanTitle.includes('过期规范')) {
+          const codeMatch = (issue.description || '').match(/[A-Z]{1,3}\/T?\s*\d+-\d{4}/);
+          if (codeMatch) keywords.push(codeMatch[0]);
+        }
+        // 在 annotatedContent 中搜索关键词，找到附近页码
+        for (const kw of keywords) {
+          if (!kw || kw.length < 2) continue;
+          const searchIdx = annotated.indexOf(kw);
+          if (searchIdx >= 0) {
+            issue.location = findNearbyPage(searchIdx);
+            if (issue.location) break; // 找到就停止
+          }
         }
       }
     }
