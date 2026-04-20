@@ -1588,6 +1588,10 @@ export class ReviewAssistant {
 
   // ==================== 知识库 Tab ====================
   private renderKnowledgeTab(): string {
+    const moduleOptions = this.knowledgeModules.length > 0
+      ? this.knowledgeModules.map((m: {id: string, name: string}) => `<option value="${m.id}">${m.name}</option>`).join('')
+      : '<option value="">暂无模块</option>';
+
     return `
       <div class="space-y-5">
         <div class="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl p-5 text-white">
@@ -1595,6 +1599,7 @@ export class ReviewAssistant {
           <div class="text-xs text-blue-200 mt-2">🔒 仅管理员可见和操作</div>
         </div>
         <div class="grid-layout">
+          <!-- 左侧：知识库文件上传 -->
           <div class="space-y-5">
             <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
               <div class="flex items-center gap-2 mb-3"><div class="w-7 h-7 bg-green-50 rounded-lg flex items-center justify-center text-sm"><span class="text-green-600">📝</span></div><h3 class="font-semibold text-gray-900 text-sm">添加知识到指定模块</h3></div>
@@ -1641,18 +1646,11 @@ export class ReviewAssistant {
               </div>
             `:''}
           </div>
+          <!-- 右侧：审核依据配置 + 搜索测试 -->
           <div class="space-y-5">
             <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-              <h3 class="text-sm font-semibold text-gray-900 mb-3">🗂️ 模块知识库说明</h3>
-              <div class="space-y-2">
-                ${Object.entries(REVIEW_TYPES).filter(([k])=>k!=='comprehensive').map(([key,config])=>`
-                  <div class="border rounded-lg p-2.5"><div class="flex items-center gap-1.5 mb-1"><span>${config.icon}</span><span class="text-xs font-medium">${config.label}</span><span class="text-xs text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">${config.dataset}</span></div><p class="text-xs text-gray-500">${config.desc}</p></div>
-                `).join('')}
-              </div>
-            </div>
-            <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-              <div class="flex items-center gap-2 mb-3"><span class="text-sm">🎯</span><h3 class="text-sm font-semibold text-gray-900">审核依据配置</h3><span class="text-xs text-gray-400">— 按模块设定额外约束</span></div>
-              <p class="text-xs text-gray-500 mb-3">管理员可为每个模块配置审核依据：<b>智能</b>模式自动检索知识库+联网搜索（知识库优先）；上传范文让 AI 对照排查差异；或通过文字规则约束格式合规性。配置后，该模块审核时自动附加对应约束。</p>
+              <div class="flex items-center gap-2 mb-3"><span class="text-sm">🎯</span><h3 class="text-sm font-semibold text-gray-900">审核依据配置</h3><span class="text-xs text-gray-400">— 按模块设定审核约束</span></div>
+              <p class="text-xs text-gray-500 mb-3">为每个模块配置审核方式：<b>智能</b>自动检索知识库+联网搜索；<b>范文对比</b>粘贴范文内容让 AI 对照排查差异；<b>文字约束</b>自定义规则检查格式合规性。</p>
               <div class="space-y-3">
                 ${Object.entries(REVIEW_TYPES).filter(([k])=>k!=='comprehensive').map(([key,config])=>{
                   const mc = this.moduleConstraints[key] || { mode: 'none' as const };
@@ -1663,19 +1661,15 @@ export class ReviewAssistant {
                     </div>
                     <div class="flex gap-1 mb-1.5">
                       <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='smart'||mc.mode==='none'?'border-green-400 bg-green-50 text-green-700':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="smart">🧠 智能</button>
-                      <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='reference'?'border-purple-400 bg-purple-50 text-purple-600':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="reference">📁 范文对比</button>
+                      <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='reference'?'border-purple-400 bg-purple-50 text-purple-600':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="reference">📄 范文对比</button>
                       <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='rules'?'border-amber-400 bg-amber-50 text-amber-600':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="rules">📝 文字约束</button>
                     </div>
                     ${mc.mode==='smart'?`
-                      <div class="text-xs text-green-600 bg-green-50 rounded p-1.5 flex items-center gap-1.5"><span>🧠</span><span>自动检索知识库，知识库不足时联网搜索补全，知识库优先级最高</span></div>
+                      <div class="text-xs text-green-600 bg-green-50 rounded p-1.5 flex items-center gap-1.5"><span>🧠</span><span>自动检索知识库，知识库不足时联网搜索补全</span></div>
                     `:''}
                     ${mc.mode==='reference'?`
                       <div class="mc-ref-zone" data-mcmodule="${key}">
-                        <div class="border-2 border-dashed border-purple-300 rounded-lg p-2 text-center hover:border-purple-400 transition-colors cursor-pointer bg-purple-50/30 mc-file-drop" data-mcmodule="${key}">
-                          <div class="text-sm mb-0.5">📁</div>
-                          <p class="text-xs text-purple-600">上传范文/标准文件</p>
-                          <input type="file" class="hidden mc-file-input" data-mcmodule="${key}" accept=".pdf,.docx,.doc,.txt,.text" />
-                        </div>
+                        <textarea class="w-full border border-purple-200 rounded-lg p-2 text-xs text-gray-700 resize-none focus:ring-1 focus:ring-purple-300 focus:border-purple-400 mc-ref-input" data-mcmodule="${key}" rows="3" placeholder="粘贴范文参考内容，审核时将与之对比...">${mc.fileContent||''}</textarea>
                         ${mc.fileContent?`<div class="mt-1 p-1.5 bg-purple-50 rounded flex items-center gap-1.5"><span class="text-green-600 text-xs">✅</span><span class="text-xs text-purple-700 truncate flex-1">${mc.fileName||'范文'} (${(mc.fileContent.length/1000).toFixed(1)}k字)</span><button class="mc-file-clear text-xs text-gray-400 hover:text-red-500" data-mcmodule="${key}">✕</button></div>`:''}
                       </div>
                     `:''}
@@ -1826,34 +1820,33 @@ export class ReviewAssistant {
     // 审核依据模式切换（按模块）
     document.querySelectorAll('.mc-mode-btn').forEach(btn => btn.addEventListener('click', () => {
       const module = (btn as HTMLElement).dataset.mcmodule as string;
-      const mode = (btn as HTMLElement).dataset.mcmode as 'none' | 'reference' | 'rules';
+      const mode = (btn as HTMLElement).dataset.mcmode as 'smart' | 'reference' | 'rules';
       if (module && mode) {
         if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'smart' };
         this.moduleConstraints[module].mode = mode;
+        // 保存当前输入框中的范文/约束内容
+        const refInput = document.querySelector(`.mc-ref-input[data-mcmodule="${module}"]`) as HTMLTextAreaElement;
+        if (refInput && this.moduleConstraints[module].mode === 'reference') {
+          this.moduleConstraints[module].fileContent = refInput.value;
+        }
+        const rulesInput = document.querySelector(`.mc-rules-input[data-mcmodule="${module}"]`) as HTMLTextAreaElement;
+        if (rulesInput) {
+          this.moduleConstraints[module].rules = rulesInput.value;
+        }
         this.render();
       }
     }));
 
-    // 审核依据文件上传（按模块）
-    document.querySelectorAll('.mc-file-drop').forEach(zone => {
-      const module = (zone as HTMLElement).dataset.mcmodule as string;
-      const input = document.querySelector(`.mc-file-input[data-mcmodule="${module}"]`) as HTMLInputElement;
-      zone.addEventListener('click', () => input?.click());
-      zone.addEventListener('dragover', (e: Event) => { e.preventDefault(); (zone as HTMLElement).classList.add('border-purple-400','bg-purple-100'); });
-      zone.addEventListener('dragleave', () => { (zone as HTMLElement).classList.remove('border-purple-400','bg-purple-100'); });
-      zone.addEventListener('drop', (ev: Event) => { ev.preventDefault(); const de = ev as DragEvent;
-        (zone as HTMLElement).classList.remove('border-purple-400','bg-purple-100');
-        const file = de.dataTransfer?.files[0];
-        if (file) this.handleConstraintFile(file, module);
+    // 范文内容输入（纯文本粘贴，不再有文件上传）
+    document.querySelectorAll('.mc-ref-input').forEach(ta => {
+      const module = (ta as HTMLElement).dataset.mcmodule as string;
+      ta.addEventListener('input', () => {
+        if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'reference' };
+        this.moduleConstraints[module].fileContent = (ta as HTMLTextAreaElement).value;
+        this.moduleConstraints[module].fileName = '范文内容';
       });
     });
-    document.querySelectorAll('.mc-file-input').forEach(input => {
-      const module = (input as HTMLElement).dataset.mcmodule as string;
-      input.addEventListener('change', () => {
-        const file = (input as HTMLInputElement).files?.[0];
-        if (file) this.handleConstraintFile(file, module);
-      });
-    });
+    // 范文内容清除
     document.querySelectorAll('.mc-file-clear').forEach(btn => {
       const module = (btn as HTMLElement).dataset.mcmodule as string;
       btn.addEventListener('click', () => {
