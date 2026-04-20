@@ -1226,59 +1226,62 @@ export class ReviewAssistant {
       outdated_standard: {icon: '📜', title: '过期规范引用', sectionClass: 'border-purple-200 bg-purple-50/30', headerClass: 'text-purple-800 bg-purple-100', itemBorder: 'border-purple-100', itemBg: 'bg-white'},
       non_compliant: {icon: '⛔', title: '技术参数不合规', sectionClass: 'border-red-300 bg-red-50/30', headerClass: 'text-red-800 bg-red-100', itemBorder: 'border-red-100', itemBg: 'bg-white'},
       missing: {icon: '❗', title: '内容缺失', sectionClass: 'border-amber-200 bg-amber-50/30', headerClass: 'text-amber-800 bg-amber-100', itemBorder: 'border-amber-100', itemBg: 'bg-white'},
-      other: {icon: '⚠️', title: '其他问题与提醒', sectionClass: 'border-yellow-200 bg-yellow-50/30', headerClass: 'text-yellow-800 bg-yellow-100', itemBorder: 'border-yellow-100', itemBg: 'bg-white'},
+      other: {icon: '⚠️', title: '问题与提醒', sectionClass: 'border-yellow-200 bg-yellow-50/30', headerClass: 'text-yellow-800 bg-yellow-100', itemBorder: 'border-yellow-100', itemBg: 'bg-white'},
+    };
+
+    // 智能分类：对缺少 category 或 category 不在已知范围内的 issues，根据内容推断分类
+    const inferCategory = (issue: Issue): string => {
+      if (issue.category && categoryConfig[issue.category]) return issue.category;
+      const t = (issue.title || '').toLowerCase();
+      const d = (issue.description || '').toLowerCase();
+      // 错别字：title 包含 → 或描述中含"错别字"/"正确内容"
+      if (t.includes('→') || t.includes('错别字') || d.includes('错别字') || d.includes('正确内容')) return 'typo';
+      // 过期规范：含"过期"/"现行替代"/"实施日期"/规范编号格式
+      if (t.includes('过期') || d.includes('过期规范') || d.includes('现行替代') || d.includes('实施日期') || d.includes('实施时间')) return 'outdated_standard';
+      // 参数不合规：含"参数"/"不合规"/"正确值"
+      if (t.includes('参数不合规') || t.includes('不合规') || d.includes('正确值') || d.includes('参数不合规')) return 'non_compliant';
+      // 格式错误：含"格式"/"标点"/"编号"/"上下标"/"排版"
+      if (t.includes('格式') || t.includes('标点') || t.includes('编号') || t.includes('上下标') || t.includes('排版') || d.includes('格式错误') || d.includes('格式问题')) return 'format';
+      // 内容缺失：含"缺失"/"缺少"/"遗漏"
+      if (t.includes('缺失') || t.includes('缺少') || t.includes('遗漏') || d.includes('缺失') || d.includes('缺少')) return 'missing';
+      return 'other';
     };
 
     // 从 annotatedContent 中提取标注，补充 issues 中遗漏的条目
-    const allIssues = [...issues];
+    const allIssues: Issue[] = issues.map(i => ({ ...i, category: inferCategory(i) as Issue['category'] }));
     if (annotated) {
-      // 提取各类标注
-      const typoAnnotations = [...annotated.matchAll(/【🔴错别字：应改为"([^"]+)"】/g)];
-      const outdatedAnnotations = [...annotated.matchAll(/【❌过期规范：([^】]+)】/g)];
-      const nonCompliantAnnotations = [...annotated.matchAll(/【❌参数不合规：([^】]+)】/g)];
-      const formatAnnotations = [...annotated.matchAll(/【❌格式错误：([^】]+)】/g)];
-      const errorAnnotations = [...annotated.matchAll(/【❌问题：([^】]+)】/g)];
-      const warnAnnotations = [...annotated.matchAll(/【⚠️提醒：([^】]+)】/g)];
+      // 使用更宽松的正则提取各类标注（兼容 LLM 输出格式差异）
+      const typoAnnotations = [...annotated.matchAll(/【🔴错别字[：:]\s*(?:应改为?|应为|应为)"?([^"】]+)"?】/g)];
+      const outdatedAnnotations = [...annotated.matchAll(/【❌过期规范[：:]([^】]+)】/g)];
+      const nonCompliantAnnotations = [...annotated.matchAll(/【❌参数不合规[：:]([^】]+)】/g)];
+      const formatAnnotations = [...annotated.matchAll(/【❌格式错误[：:]([^】]+)】/g)];
+      const errorAnnotations = [...annotated.matchAll(/【❌问题[：:]([^】]+)】/g)];
+      const warnAnnotations = [...annotated.matchAll(/【⚠️提醒[：:]([^】]+)】/g)];
 
-      // 检查每个标注是否在 issues 中有对应条目
-      // 按类别分别构建匹配集，避免跨类误匹配
-      const typoIssueTitles = new Set(issues.filter(i => i.category === 'typo').map(i => i.title.toLowerCase()));
-      const outdatedIssueDescs = new Set(issues.filter(i => i.category === 'outdated_standard').map(i => (i.description || '').toLowerCase()));
-      const nonCompliantIssueDescs = new Set(issues.filter(i => i.category === 'non_compliant').map(i => (i.description || '').toLowerCase()));
-      const formatIssueDescs = new Set(issues.filter(i => i.category === 'format').map(i => (i.description || '').toLowerCase()));
-      const otherIssueDescs = new Set(issues.filter(i => i.category === 'other').map(i => (i.description || '').toLowerCase()));
+      // 构建已有的各类 issue 的标题/描述集合（按推断后的 category）
+      const existingTypoTitles = new Set(allIssues.filter(i => i.category === 'typo').map(i => i.title.toLowerCase()));
+      const existingOutdatedDescs = new Set(allIssues.filter(i => i.category === 'outdated_standard').map(i => (i.description || '').substring(0, 30).toLowerCase()));
+      const existingNonCompliantDescs = new Set(allIssues.filter(i => i.category === 'non_compliant').map(i => (i.description || '').substring(0, 30).toLowerCase()));
+      const existingFormatDescs = new Set(allIssues.filter(i => i.category === 'format').map(i => (i.description || '').substring(0, 30).toLowerCase()));
+      const existingOtherDescs = new Set(allIssues.filter(i => i.category === 'other').map(i => (i.description || '').substring(0, 30).toLowerCase()));
 
-      // 严格匹配：只在同类 issue 中匹配，且要求关键词长度≥2
+      // 严格匹配：仅在同类 issue 中匹配，避免跨类误匹配
       const hasTypoMatch = (correctChar: string): boolean => {
-        if (correctChar.length < 2) return false; // 单字太短，不做模糊匹配
-        for (const t of typoIssueTitles) { if (t.includes(correctChar.toLowerCase())) return true; }
+        if (correctChar.length < 2) return false;
+        const lower = correctChar.toLowerCase();
+        for (const t of existingTypoTitles) { if (t.includes(lower)) return true; }
         return false;
       };
-      const hasOutdatedMatch = (desc: string): boolean => {
-        const lower = desc.toLowerCase();
-        for (const d of outdatedIssueDescs) { if (d && lower.length >= 4 && d.includes(lower.substring(0, Math.min(lower.length, 20)))) return true; }
-        return false;
-      };
-      const hasNonCompliantMatch = (desc: string): boolean => {
-        const lower = desc.toLowerCase();
-        for (const d of nonCompliantIssueDescs) { if (d && lower.length >= 4 && d.includes(lower.substring(0, Math.min(lower.length, 20)))) return true; }
-        return false;
-      };
-      const hasFormatMatch = (desc: string): boolean => {
-        const lower = desc.toLowerCase();
-        for (const d of formatIssueDescs) { if (d && lower.length >= 4 && d.includes(lower.substring(0, Math.min(lower.length, 20)))) return true; }
-        return false;
-      };
-      const hasOtherMatch = (desc: string): boolean => {
-        const lower = desc.toLowerCase();
-        for (const d of otherIssueDescs) { if (d && lower.length >= 4 && d.includes(lower.substring(0, Math.min(lower.length, 20)))) return true; }
+      const hasCategoryMatch = (desc: string, existingSet: Set<string>): boolean => {
+        if (desc.length < 2) return false;
+        const prefix = desc.substring(0, Math.min(desc.length, 20)).toLowerCase();
+        for (const e of existingSet) { if (e && e.includes(prefix)) return true; }
         return false;
       };
 
-      // 找到标注附近的页码标记（搜索范围扩大到2000字符，确保跨页找到标记）
+      // 找到标注附近的页码标记（搜索范围2000字符）
       const findNearbyPage = (index: number): string => {
         const before = annotated.substring(Math.max(0, index - 2000), index);
-        // 找最后一个【第N页】标记
         const pageMatches = [...before.matchAll(/【第(\d+)页】/g)];
         if (pageMatches.length > 0) {
           const lastMatch = pageMatches[pageMatches.length - 1];
@@ -1289,85 +1292,70 @@ export class ReviewAssistant {
 
       // 补充遗漏的错别字
       for (const m of typoAnnotations) {
-        if (!hasTypoMatch(m[1])) {
-          // 尝试找到被标注的错别字原文
-          const idx = m.index || 0;
-          const before = annotated.substring(Math.max(0, idx - 20), idx);
-          const charMatch = before.match(/([^\s【】]{1,10})$/);
-          const wrongChar = charMatch ? charMatch[1] : '错别字';
-          allIssues.push({ level: 'low', category: 'typo', title: `${wrongChar}→${m[1]}`, description: `错误内容：${wrongChar}，正确内容：${m[1]}`, location: findNearbyPage(idx), suggestion: `将"${wrongChar}"改为"${m[1]}"` });
-        }
+        if (hasTypoMatch(m[1])) continue;
+        const idx = m.index || 0;
+        const before = annotated.substring(Math.max(0, idx - 20), idx);
+        const charMatch = before.match(/([^\s【】]{1,10})$/);
+        const wrongChar = charMatch ? charMatch[1] : '错别字';
+        allIssues.push({ level: 'low', category: 'typo', title: `${wrongChar}→${m[1]}`, description: `错误内容：${wrongChar}，正确内容：${m[1]}`, location: findNearbyPage(idx), suggestion: `将"${wrongChar}"改为"${m[1]}"` });
       }
       // 补充遗漏的过期规范
       for (const m of outdatedAnnotations) {
-        if (!hasOutdatedMatch(m[1])) {
-          const idx = m.index || 0;
-          allIssues.push({ level: 'high', category: 'outdated_standard', title: '过期规范', description: m[1], location: findNearbyPage(idx), suggestion: '更新为现行规范版本' });
-        }
+        if (hasCategoryMatch(m[1], existingOutdatedDescs)) continue;
+        const idx = m.index || 0;
+        allIssues.push({ level: 'high', category: 'outdated_standard', title: '过期规范', description: m[1], location: findNearbyPage(idx), suggestion: '更新为现行规范版本' });
       }
       // 补充遗漏的参数不合规
       for (const m of nonCompliantAnnotations) {
-        if (!hasNonCompliantMatch(m[1])) {
-          const idx = m.index || 0;
-          allIssues.push({ level: 'high', category: 'non_compliant', title: '参数不合规', description: m[1], location: findNearbyPage(idx), suggestion: '按现行标准修正参数' });
-        }
+        if (hasCategoryMatch(m[1], existingNonCompliantDescs)) continue;
+        const idx = m.index || 0;
+        allIssues.push({ level: 'high', category: 'non_compliant', title: '参数不合规', description: m[1], location: findNearbyPage(idx), suggestion: '按现行标准修正参数' });
       }
       // 补充遗漏的格式错误
       for (const m of formatAnnotations) {
-        if (!hasFormatMatch(m[1])) {
-          const idx = m.index || 0;
-          allIssues.push({ level: 'medium', category: 'format', title: '格式错误', description: m[1], location: findNearbyPage(idx), suggestion: '按规范修正格式' });
-        }
+        if (hasCategoryMatch(m[1], existingFormatDescs)) continue;
+        const idx = m.index || 0;
+        allIssues.push({ level: 'medium', category: 'format', title: '格式错误', description: m[1], location: findNearbyPage(idx), suggestion: '按规范修正格式' });
       }
       // 补充遗漏的问题标注
       for (const m of errorAnnotations) {
-        if (!hasOtherMatch(m[1])) {
-          const idx = m.index || 0;
-          allIssues.push({ level: 'medium', category: 'other', title: m[1].substring(0, 30), description: m[1], location: findNearbyPage(idx), suggestion: '请核实并修正' });
-        }
+        if (hasCategoryMatch(m[1], existingOtherDescs)) continue;
+        const idx = m.index || 0;
+        allIssues.push({ level: 'high', category: 'other', title: m[1].substring(0, 30), description: m[1], location: findNearbyPage(idx), suggestion: '请核实并修正' });
       }
       // 补充遗漏的提醒标注
       for (const m of warnAnnotations) {
-        if (!hasOtherMatch(m[1])) {
-          const idx = m.index || 0;
-          allIssues.push({ level: 'low', category: 'other', title: '提醒', description: m[1], location: findNearbyPage(idx), suggestion: '请关注此提醒' });
-        }
+        if (hasCategoryMatch(m[1], existingOtherDescs)) continue;
+        const idx = m.index || 0;
+        allIssues.push({ level: 'low', category: 'other', title: '提醒', description: m[1], location: findNearbyPage(idx), suggestion: '请关注此提醒' });
       }
 
       // 为 LLM issues 中缺少 location 的条目，从 annotatedContent 中根据关键词查找页码
       for (const issue of allIssues) {
-        if (issue.location) continue; // 已有页码，跳过
-        // 提取 title 中的关键词（去除段标记如"[正文段落]"）
+        if (issue.location) continue;
         const cleanTitle = issue.title.replace(/^\[.*?\]\s*/, '');
         const keywords = [cleanTitle];
-        // 对于过期规范，额外提取编号关键词
         if (issue.category === 'outdated_standard' || cleanTitle.includes('过期规范')) {
           const codeMatch = (issue.description || '').match(/[A-Z]{1,3}\/T?\s*\d+-\d{4}/);
           if (codeMatch) keywords.push(codeMatch[0]);
         }
-        // 在 annotatedContent 中搜索关键词，找到附近页码
         for (const kw of keywords) {
           if (!kw || kw.length < 2) continue;
           const searchIdx = annotated.indexOf(kw);
           if (searchIdx >= 0) {
             issue.location = findNearbyPage(searchIdx);
-            if (issue.location) break; // 找到就停止
+            if (issue.location) break;
           }
         }
       }
     }
 
-    // 按类别分组（使用合并后的 allIssues）
+    // 按类别分组（使用合并后的 allIssues，所有 issue 都已推断 category）
     const categorizedIssues: Record<string, Issue[]> = {};
-    const uncategorized: Issue[] = [];
     for (const issue of allIssues) {
-      const cat = issue.category || '';
-      if (cat && categoryConfig[cat]) {
-        if (!categorizedIssues[cat]) categorizedIssues[cat] = [];
-        categorizedIssues[cat].push(issue);
-      } else {
-        uncategorized.push(issue);
-      }
+      const cat = issue.category || 'other';
+      if (!categorizedIssues[cat]) categorizedIssues[cat] = [];
+      categorizedIssues[cat].push(issue);
     }
 
     // 渲染单个问题条目（参考范文格式：页码+位置+描述+正确内容）
@@ -1440,30 +1428,25 @@ export class ReviewAssistant {
       </div>`;
     };
 
-    // 渲染分类区块
-    let rightPanelHtml = '';
-    
-    // 总结统计（基于合并后的 allIssues）
-    const stats = [
-      {label: '格式错误', count: categorizedIssues.format?.length || 0, color: 'text-red-700 bg-red-50'},
-      {label: '错别字', count: categorizedIssues.typo?.length || 0, color: 'text-orange-700 bg-orange-50'},
-      {label: '过期规范', count: categorizedIssues.outdated_standard?.length || 0, color: 'text-purple-700 bg-purple-50'},
-      {label: '参数不合规', count: categorizedIssues.non_compliant?.length || 0, color: 'text-red-700 bg-red-50'},
-      {label: '内容缺失', count: categorizedIssues.missing?.length || 0, color: 'text-amber-700 bg-amber-50'},
-      {label: '其他/提醒', count: categorizedIssues.other?.length || 0, color: 'text-yellow-700 bg-yellow-50'},
-    ].filter(s => s.count > 0);
-
-    if (stats.length > 0) {
-      rightPanelHtml += `<div class="flex items-center gap-2 flex-wrap mb-3">${stats.map(s => `<span class="text-xs px-2 py-1 rounded-full font-medium ${s.color}">${s.label} ${s.count}</span>`).join('')}</div>`;
+    // 按分类渲染问题 - 构建按钮Tab切换界面
+    const categoryOrder = ['format', 'typo', 'outdated_standard', 'non_compliant', 'missing', 'other'];
+    // 生成分类按钮和内容面板
+    const tabs: Array<{key: string; label: string; icon: string; count: number; color: string; activeColor: string; borderColor: string}> = [];
+    // 第一个按钮："全部"
+    tabs.push({key: 'all', label: '全部', icon: '📋', count: allIssues.length, color: 'text-gray-600 bg-gray-100', activeColor: 'text-white bg-gray-800', borderColor: 'border-gray-300'});
+    for (const cat of categoryOrder) {
+      const count = categorizedIssues[cat]?.length || 0;
+      if (count === 0) continue;
+      const cc = categoryConfig[cat];
+      tabs.push({key: cat, label: cc.title, icon: cc.icon, count, color: 'text-gray-600 bg-gray-100', activeColor: `text-white ${cc.headerClass}`, borderColor: cc.sectionClass});
     }
 
-    // 按分类渲染问题（参考范文格式）
-    const categoryOrder = ['format', 'typo', 'outdated_standard', 'non_compliant', 'missing', 'other'];
-    for (const cat of categoryOrder) {
-      if (!categorizedIssues[cat] || categorizedIssues[cat].length === 0) continue;
-      const cc = categoryConfig[cat];
+    // 渲染每个分类的内容
+    const renderCategoryBlock = (cat: string): string => {
       const catIssues = categorizedIssues[cat];
-      rightPanelHtml += `
+      if (!catIssues || catIssues.length === 0) return '';
+      const cc = categoryConfig[cat];
+      return `
         <div class="border ${cc.sectionClass} rounded-xl overflow-hidden mb-3">
           <div class="px-3 py-2 ${cc.headerClass} font-semibold text-sm flex items-center gap-2">
             <span>${cc.icon}</span><span>${cc.title}</span><span class="opacity-70">(${catIssues.length})</span>
@@ -1472,24 +1455,31 @@ export class ReviewAssistant {
             ${catIssues.map(i => renderIssueItem(i)).join('')}
           </div>
         </div>`;
-    }
+    };
 
-    // 未分类的问题
-    if (uncategorized.length > 0) {
-      rightPanelHtml += `
-        <div class="border border-gray-200 rounded-xl overflow-hidden mb-3">
-          <div class="px-3 py-2 bg-gray-100 text-gray-800 font-semibold text-sm flex items-center gap-2">
-            <span>⚠️</span><span>其他问题</span><span class="opacity-70">(${uncategorized.length})</span>
-          </div>
-          <div class="p-2.5 space-y-1.5">
-            ${uncategorized.map(i => renderIssueItem(i)).join('')}
-          </div>
-        </div>`;
-    }
-
-    // 如果没有任何问题
+    // 生成所有分类内容（全部 tab 显示所有，单分类 tab 只显示对应分类）
+    let rightPanelHtml = '';
     if (allIssues.length === 0 && annotated) {
       rightPanelHtml = `<div class="text-center py-8 text-gray-500"><div class="text-3xl mb-2">✅</div><p class="text-sm font-medium">未发现明显问题</p><p class="text-xs mt-1">建议使用"详细审核"模式进行更深入检查</p></div>`;
+    } else {
+      rightPanelHtml += `<div class="flex items-center gap-1.5 flex-wrap mb-3">
+        ${tabs.map((tab, idx) => `<button class="review-cat-btn text-xs px-2.5 py-1.5 rounded-lg font-medium transition-all border ${idx === 0 ? tab.activeColor + ' border-transparent shadow-sm' : tab.color + ' hover:bg-gray-200 border-gray-200'}" data-cat="${tab.key}">${tab.icon} ${tab.label} <span class="opacity-70">(${tab.count})</span></button>`).join('')}
+      </div>`;
+
+      // 为每个 tab key 生成对应的内容区
+      for (const tab of tabs) {
+        const isHidden = tab.key !== 'all' ? 'hidden' : '';
+        let content = '';
+        if (tab.key === 'all') {
+          // 全部：按分类顺序显示所有分类
+          for (const cat of categoryOrder) {
+            content += renderCategoryBlock(cat);
+          }
+        } else {
+          content = renderCategoryBlock(tab.key);
+        }
+        rightPanelHtml += `<div class="review-cat-panel ${isHidden}" data-cat="${tab.key}">${content}</div>`;
+      }
     }
 
     return `
@@ -1861,6 +1851,25 @@ export class ReviewAssistant {
       document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
       document.getElementById(`tab-${tabId}`)?.classList.remove('hidden');
     }));
+
+    // 审查结果分类按钮切换
+    document.querySelectorAll('.review-cat-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const catKey = (e.currentTarget as HTMLElement).dataset.cat;
+        if (!catKey) return;
+        // 更新按钮样式
+        document.querySelectorAll('.review-cat-btn').forEach(b => {
+          b.classList.remove('text-white', 'bg-gray-800', 'shadow-sm', 'border-transparent');
+          b.classList.add('text-gray-600', 'bg-gray-100', 'border-gray-200');
+        });
+        const activeBtn = e.currentTarget as HTMLElement;
+        activeBtn.classList.remove('text-gray-600', 'bg-gray-100', 'border-gray-200');
+        activeBtn.classList.add('text-white', 'bg-gray-800', 'shadow-sm', 'border-transparent');
+        // 切换面板
+        document.querySelectorAll('.review-cat-panel').forEach(p => p.classList.add('hidden'));
+        document.querySelector(`.review-cat-panel[data-cat="${catKey}"]`)?.classList.remove('hidden');
+      });
+    });
 
     document.getElementById('closeResultBtn')?.addEventListener('click', () => this.closeResult());
     document.getElementById('downloadReportBtn')?.addEventListener('click', () => {
