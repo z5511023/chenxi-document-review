@@ -1196,15 +1196,19 @@ export class ReviewAssistant {
       return `<div class="text-center py-10 text-gray-500"><div class="text-3xl mb-2">📋</div><p class="text-sm">无审核标注数据</p></div>`;
     }
 
-    // 高亮标注内容（左侧原文标注）
+    // 高亮标注内容（左侧原文标注）—— 使用宽松正则兼容 LLM 输出格式差异
     const highlighted = annotated
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-      .replace(/【🔴错别字：应改为"([^"]+)"】/g, '<mark class="bg-red-300 text-red-900 px-1 rounded font-bold border-b-2 border-red-500" title="错别字">🔴 应为"$1"</mark>')
-      .replace(/【❌过期规范：([^】]+)】/g, '<mark class="bg-purple-200 text-purple-900 px-1 rounded font-bold border-b-2 border-purple-500">📜 $1</mark>')
-      .replace(/【❌参数不合规：([^】]+)】/g, '<mark class="bg-orange-200 text-orange-900 px-1 rounded font-bold border-b-2 border-orange-500">⛔ $1</mark>')
-      .replace(/【❌问题：([^】]+)】/g, '<mark class="bg-red-200 text-red-800 px-1 rounded font-medium">❌ $1</mark>')
-      .replace(/【❌格式错误：([^】]+)】/g, '<mark class="bg-red-200 text-red-800 px-1 rounded font-medium">📐 $1</mark>')
-      .replace(/【⚠️提醒：([^】]+)】/g, '<mark class="bg-yellow-200 text-yellow-800 px-1 rounded font-medium">⚠️ $1</mark>')
+      // 错别字标注：匹配 【🔴错别字...】 中的正确字（引号内的内容）
+      .replace(/【🔴错别字[^】]*】/g, (m) => {
+        const correct = m.match(/["\u201c\u201d']([^"'\u201c\u201d】]+)["\u201c\u201d']/);
+        return `<mark class="bg-red-300 text-red-900 px-1 rounded font-bold border-b-2 border-red-500" title="错别字">🔴 应为"${correct ? correct[1] : '?'}"</mark>`;
+      })
+      .replace(/【❌过期规范[：:][^】]+】/g, (m) => { const c = m.match(/过期规范[：:](.+)/); return `<mark class="bg-purple-200 text-purple-900 px-1 rounded font-bold border-b-2 border-purple-500">📜 ${c ? c[1].replace(/】$/, '') : m}</mark>`; })
+      .replace(/【❌参数不合规[：:][^】]+】/g, (m) => { const c = m.match(/参数不合规[：:](.+)/); return `<mark class="bg-orange-200 text-orange-900 px-1 rounded font-bold border-b-2 border-orange-500">⛔ ${c ? c[1].replace(/】$/, '') : m}</mark>`; })
+      .replace(/【❌问题[：:][^】]+】/g, (m) => { const c = m.match(/问题[：:](.+)/); return `<mark class="bg-red-200 text-red-800 px-1 rounded font-medium">❌ ${c ? c[1].replace(/】$/, '') : m}</mark>`; })
+      .replace(/【❌格式错误[：:][^】]+】/g, (m) => { const c = m.match(/格式错误[：:](.+)/); return `<mark class="bg-red-200 text-red-800 px-1 rounded font-medium">📐 ${c ? c[1].replace(/】$/, '') : m}</mark>`; })
+      .replace(/【⚠️提醒[：:][^】]+】/g, (m) => { const c = m.match(/提醒[：:](.+)/); return `<mark class="bg-yellow-200 text-yellow-800 px-1 rounded font-medium">⚠️ ${c ? c[1].replace(/】$/, '') : m}</mark>`; })
       .replace(/\n/g,'<br/>');
 
     const typoCount = (annotated.match(/🔴错别字/g) || []).length;
@@ -1250,13 +1254,63 @@ export class ReviewAssistant {
     // 从 annotatedContent 中提取标注，补充 issues 中遗漏的条目
     const allIssues: Issue[] = issues.map(i => ({ ...i, category: inferCategory(i) as Issue['category'] }));
     if (annotated) {
-      // 使用更宽松的正则提取各类标注（兼容 LLM 输出格式差异）
-      const typoAnnotations = [...annotated.matchAll(/【🔴错别字[：:]\s*(?:应改为?|应为|应为)"?([^"】]+)"?】/g)];
-      const outdatedAnnotations = [...annotated.matchAll(/【❌过期规范[：:]([^】]+)】/g)];
-      const nonCompliantAnnotations = [...annotated.matchAll(/【❌参数不合规[：:]([^】]+)】/g)];
-      const formatAnnotations = [...annotated.matchAll(/【❌格式错误[：:]([^】]+)】/g)];
-      const errorAnnotations = [...annotated.matchAll(/【❌问题[：:]([^】]+)】/g)];
-      const warnAnnotations = [...annotated.matchAll(/【⚠️提醒[：:]([^】]+)】/g)];
+      // 使用宽松正则提取各类标注（兼容 LLM 输出格式差异：冒号全半角、引号全半角、多余空格等）
+      // 先用宽泛模式匹配整个标注，再从匹配内容中提取关键信息
+      const typoAnnotations = [...annotated.matchAll(/【🔴错别字[^】]*】/g)].map(m => {
+        const correct = m[0].match(/["\u201c\u201d']([^"'\u201c\u201d】]+)["\u201c\u201d']/);
+        return { index: m.index || 0, match: m[0], correct: correct ? correct[1] : '' };
+      }).filter(a => a.correct);
+      const outdatedAnnotations = [...annotated.matchAll(/【❌过期规范[：:][^】]+】/g)].map(m => {
+        const content = m[0].match(/过期规范[：:](.+)/);
+        return { index: m.index || 0, match: m[0], content: content ? content[1].replace(/】$/, '') : '' };
+      }).filter(a => a.content);
+      const nonCompliantAnnotations = [...annotated.matchAll(/【❌参数不合规[：:][^】]+】/g)].map(m => {
+        const content = m[0].match(/参数不合规[：:](.+)/);
+        return { index: m.index || 0, match: m[0], content: content ? content[1].replace(/】$/, '') : '' };
+      }).filter(a => a.content);
+      const formatAnnotations = [...annotated.matchAll(/【❌格式错误[：:][^】]+】/g)].map(m => {
+        const content = m[0].match(/格式错误[：:](.+)/);
+        return { index: m.index || 0, match: m[0], content: content ? content[1].replace(/】$/, '') : '' };
+      }).filter(a => a.content);
+      const errorAnnotations = [...annotated.matchAll(/【❌问题[：:][^】]+】/g)].map(m => {
+        const content = m[0].match(/问题[：:](.+)/);
+        return { index: m.index || 0, match: m[0], content: content ? content[1].replace(/】$/, '') : '' };
+      }).filter(a => a.content);
+      const warnAnnotations = [...annotated.matchAll(/【⚠️提醒[：:][^】]+】/g)].map(m => {
+        const content = m[0].match(/提醒[：:](.+)/);
+        return { index: m.index || 0, match: m[0], content: content ? content[1].replace(/】$/, '') : '' };
+      }).filter(a => a.content);
+
+      // 备用提取：如果主正则没匹配到错别字，用更简单的方式扫描
+      const typoAnnotationsFinal = typoAnnotations.length > 0 ? typoAnnotations :
+        [...annotated.matchAll(/🔴错别字[^】]*】/g)].map(m => {
+          const correct = m[0].match(/["\u201c\u201d']([^"'\u201c\u201d】]+)["\u201c\u201d']/);
+          return { index: m.index || 0, match: m[0], correct: correct ? correct[1] : '' };
+        }).filter(a => a.correct);
+
+      console.log('[标注提取] typo:', typoAnnotations.length, '/fallback:', typoAnnotationsFinal.length, 'outdated:', outdatedAnnotations.length, 'nonCompliant:', nonCompliantAnnotations.length, 'format:', formatAnnotations.length, 'error:', errorAnnotations.length, 'warn:', warnAnnotations.length);
+      console.log('[标注提取] annotated长度:', annotated.length, '前300字符:', annotated.substring(0, 300));
+      console.log('[标注提取] issues原始数量:', issues.length, '推断后typo数量:', allIssues.filter(i => i.category === 'typo').length);
+      // 调试：搜索 🔴 字符在 annotatedContent 中的位置和上下文
+      let debugIdx = 0;
+      let debugCount = 0;
+      while (debugIdx < annotated.length && debugCount < 10) {
+        const found = annotated.indexOf('🔴', debugIdx);
+        if (found === -1) break;
+        debugCount++;
+        console.log('[标注提取] 🔴位置' + debugCount + ': idx=' + found + ', 上下文="' + annotated.substring(Math.max(0, found - 5), found + 40).replace(/\n/g, '\\n') + '"');
+        debugIdx = found + 1;
+      }
+      // 调试：搜索 "错别字" 关键词
+      let debugIdx2 = 0;
+      let debugCount2 = 0;
+      while (debugIdx2 < annotated.length && debugCount2 < 5) {
+        const found = annotated.indexOf('错别字', debugIdx2);
+        if (found === -1) break;
+        debugCount2++;
+        console.log('[标注提取] 错别字位置' + debugCount2 + ': idx=' + found + ', 上下文="' + annotated.substring(Math.max(0, found - 5), found + 50).replace(/\n/g, '\\n') + '"');
+        debugIdx2 = found + 1;
+      }
 
       // 构建已有的各类 issue 的标题/描述集合（按推断后的 category）
       const existingTypoTitles = new Set(allIssues.filter(i => i.category === 'typo').map(i => i.title.toLowerCase()));
@@ -1265,7 +1319,7 @@ export class ReviewAssistant {
       const existingFormatDescs = new Set(allIssues.filter(i => i.category === 'format').map(i => (i.description || '').substring(0, 30).toLowerCase()));
       const existingOtherDescs = new Set(allIssues.filter(i => i.category === 'other').map(i => (i.description || '').substring(0, 30).toLowerCase()));
 
-      // 严格匹配：仅在同类 issue 中匹配，避免跨类误匹配
+      // 匹配检查：仅在同类 issue 中匹配，避免跨类误匹配
       const hasTypoMatch = (correctChar: string): boolean => {
         if (correctChar.length < 2) return false;
         const lower = correctChar.toLowerCase();
@@ -1290,44 +1344,44 @@ export class ReviewAssistant {
         return '';
       };
 
-      // 补充遗漏的错别字
-      for (const m of typoAnnotations) {
-        if (hasTypoMatch(m[1])) continue;
+      // 补充遗漏的错别字（使用最终提取结果）
+      for (const m of typoAnnotationsFinal) {
+        if (hasTypoMatch(m.correct)) continue;
         const idx = m.index || 0;
-        const before = annotated.substring(Math.max(0, idx - 20), idx);
+        const before = annotated.substring(Math.max(0, idx - 30), idx);
         const charMatch = before.match(/([^\s【】]{1,10})$/);
         const wrongChar = charMatch ? charMatch[1] : '错别字';
-        allIssues.push({ level: 'low', category: 'typo', title: `${wrongChar}→${m[1]}`, description: `错误内容：${wrongChar}，正确内容：${m[1]}`, location: findNearbyPage(idx), suggestion: `将"${wrongChar}"改为"${m[1]}"` });
+        allIssues.push({ level: 'low', category: 'typo', title: `${wrongChar}→${m.correct}`, description: `错误内容："${wrongChar}"，正确内容："${m.correct}"`, location: findNearbyPage(idx), suggestion: `将"${wrongChar}"改为"${m.correct}"` });
       }
       // 补充遗漏的过期规范
       for (const m of outdatedAnnotations) {
-        if (hasCategoryMatch(m[1], existingOutdatedDescs)) continue;
+        if (hasCategoryMatch(m.content, existingOutdatedDescs)) continue;
         const idx = m.index || 0;
-        allIssues.push({ level: 'high', category: 'outdated_standard', title: '过期规范', description: m[1], location: findNearbyPage(idx), suggestion: '更新为现行规范版本' });
+        allIssues.push({ level: 'high', category: 'outdated_standard', title: '过期规范', description: m.content, location: findNearbyPage(idx), suggestion: '更新为现行规范版本' });
       }
       // 补充遗漏的参数不合规
       for (const m of nonCompliantAnnotations) {
-        if (hasCategoryMatch(m[1], existingNonCompliantDescs)) continue;
+        if (hasCategoryMatch(m.content, existingNonCompliantDescs)) continue;
         const idx = m.index || 0;
-        allIssues.push({ level: 'high', category: 'non_compliant', title: '参数不合规', description: m[1], location: findNearbyPage(idx), suggestion: '按现行标准修正参数' });
+        allIssues.push({ level: 'high', category: 'non_compliant', title: '参数不合规', description: m.content, location: findNearbyPage(idx), suggestion: '按现行标准修正参数' });
       }
       // 补充遗漏的格式错误
       for (const m of formatAnnotations) {
-        if (hasCategoryMatch(m[1], existingFormatDescs)) continue;
+        if (hasCategoryMatch(m.content, existingFormatDescs)) continue;
         const idx = m.index || 0;
-        allIssues.push({ level: 'medium', category: 'format', title: '格式错误', description: m[1], location: findNearbyPage(idx), suggestion: '按规范修正格式' });
+        allIssues.push({ level: 'medium', category: 'format', title: '格式错误', description: m.content, location: findNearbyPage(idx), suggestion: '按规范修正格式' });
       }
       // 补充遗漏的问题标注
       for (const m of errorAnnotations) {
-        if (hasCategoryMatch(m[1], existingOtherDescs)) continue;
+        if (hasCategoryMatch(m.content, existingOtherDescs)) continue;
         const idx = m.index || 0;
-        allIssues.push({ level: 'high', category: 'other', title: m[1].substring(0, 30), description: m[1], location: findNearbyPage(idx), suggestion: '请核实并修正' });
+        allIssues.push({ level: 'high', category: 'other', title: m.content.substring(0, 30), description: m.content, location: findNearbyPage(idx), suggestion: '请核实并修正' });
       }
       // 补充遗漏的提醒标注
       for (const m of warnAnnotations) {
-        if (hasCategoryMatch(m[1], existingOtherDescs)) continue;
+        if (hasCategoryMatch(m.content, existingOtherDescs)) continue;
         const idx = m.index || 0;
-        allIssues.push({ level: 'low', category: 'other', title: '提醒', description: m[1], location: findNearbyPage(idx), suggestion: '请关注此提醒' });
+        allIssues.push({ level: 'low', category: 'other', title: '提醒', description: m.content, location: findNearbyPage(idx), suggestion: '请关注此提醒' });
       }
 
       // 为 LLM issues 中缺少 location 的条目，从 annotatedContent 中根据关键词查找页码
