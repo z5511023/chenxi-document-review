@@ -7,6 +7,24 @@ export const healthCheck = pgTable("health_check", {
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow(),
 });
 
+// 知识库文件记录表
+export const knowledgeFiles = pgTable(
+  "knowledge_files",
+  {
+    id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+    title: text("title").notNull(),
+    dataset: text("dataset").notNull(),
+    doc_id: text("doc_id"),
+    content_preview: text("content_preview"),
+    source_type: text("source_type").default("text"),
+    created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    index("knowledge_files_dataset_idx").on(table.dataset),
+  ]
+);
+
 // 审核记录表
 export const reviewRecords = pgTable(
   "review_records",

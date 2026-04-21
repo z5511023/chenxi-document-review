@@ -58,6 +58,8 @@ export class ReviewAssistant {
   private knowledgeFileName: string = '';
   // 审核依据：按模块绑定，管理员在知识库中配置
   private moduleConstraints: Record<string, { mode: 'smart' | 'none' | 'reference' | 'rules'; fileContent?: string; fileName?: string; rules?: string }> = {};
+  // 知识库文件列表
+  private knowledgeFiles: Array<{ id: string; title: string; dataset: string; doc_id: string; content_preview: string; source_type: string; created_at: string }> = [];
   private isImporting = false;
   private managedUsers: ManagedUser[] = [];
   private reviewMeta: { knowledgeUsed?: boolean; knowledgeChunks?: number; knowledgeDatasets?: string[]; webSearchUsed?: boolean; webSearchResults?: number } | null = null;
@@ -313,6 +315,7 @@ export class ReviewAssistant {
   setActiveTab(tab: TabView) {
     this.activeTab = tab;
     if (tab === 'admin') { this.loadManagedUsers(); this.loadDbStats(); this.loadUsageLogs(); }
+    if (tab === 'knowledge') { this.loadKnowledgeFiles(); }
     this.render();
   }
 
@@ -714,6 +717,46 @@ export class ReviewAssistant {
   addKnowledgeEntry(entry: KnowledgeEntry) { this.knowledgeEntries.push(entry); this.render(); }
   removeKnowledgeEntry(id: string) { this.knowledgeEntries = this.knowledgeEntries.filter(e => e.id !== id); this.render(); }
 
+  private async loadKnowledgeFiles() {
+    try {
+      const res = await fetch('/api/knowledge/files', { headers: this.authHeaders() });
+      const data = await res.json();
+      if (data.success && data.files) { this.knowledgeFiles = data.files; this.renderKnowledgeFileList(); }
+    } catch (error) { console.error('加载知识库文件列表失败:', error); }
+  }
+
+  private async deleteKnowledgeFile(id: string) {
+    if (!confirm('确定删除此知识库文件？')) return;
+    try {
+      const res = await fetch(`/api/knowledge/files/${id}`, { method: 'DELETE', headers: this.authHeaders() });
+      const data = await res.json();
+      if (data.success) { this.knowledgeFiles = this.knowledgeFiles.filter(f => f.id !== id); this.renderKnowledgeFileList(); }
+      else alert(data.error || '删除失败');
+    } catch (error) { console.error('删除知识库文件失败:', error); }
+  }
+
+  private renderKnowledgeFileList() {
+    const el = document.getElementById('knowledgeFileList');
+    if (!el) return;
+    if (this.knowledgeFiles.length === 0) { el.innerHTML = '<p class="text-xs text-gray-400 text-center py-3">暂无知识库文件</p>'; return; }
+    const datasetLabels: Record<string, string> = { personnel_qualification: '👤 人员资质', enterprise_qualification: '🏢 企业资质', technical_document: '📐 技术文件', safety_inspection: '🔒 安全检查', document_review: '📄 公文审核', coze_doc_knowledge: '📚 通用法规' };
+    const fmtTime = (t: string) => { try { return new Date(t).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); } catch { return ''; } };
+    el.innerHTML = this.knowledgeFiles.map(f => `
+      <div class="flex items-center gap-2 p-2 bg-gray-50 rounded-lg group hover:bg-gray-100 transition-colors">
+        <span class="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 whitespace-nowrap">${datasetLabels[f.dataset] || f.dataset}</span>
+        <div class="flex-1 min-w-0">
+          <div class="text-xs font-medium text-gray-800 truncate" title="${f.title}">${f.title}</div>
+          <div class="text-xs text-gray-400">${f.source_type === 'url' ? '🔗 链接' : '📝 文本'} · ${fmtTime(f.created_at)}</div>
+        </div>
+        <button class="knowledge-file-delete opacity-0 group-hover:opacity-100 text-xs text-red-400 hover:text-red-600 transition-all px-1.5 py-0.5 rounded hover:bg-red-50" data-fid="${f.id}" title="删除">✕</button>
+      </div>
+    `).join('');
+    // 绑定删除事件
+    el.querySelectorAll('.knowledge-file-delete').forEach(btn => {
+      btn.addEventListener('click', () => { const fid = (btn as HTMLElement).dataset.fid; if (fid) this.deleteKnowledgeFile(fid); });
+    });
+  }
+
   /** 处理知识库文件上传（前端解析文本，与审核文件解析复用逻辑） */
   async handleKnowledgeFile(file: File) {
     const fileInfo = document.getElementById('knowledgeFileInfo');
@@ -800,12 +843,13 @@ export class ReviewAssistant {
       let totalSuccess = 0;
       for (const [dataset, entries] of grouped) {
         const documents = entries.map(e => e.type === 'url' ? { type: 'url', url: e.url } : { type: 'text', content: `${e.title}\n\n${e.content}` });
-        const response = await fetch('/api/knowledge/import', { method: 'POST', headers: this.authHeaders(), body: JSON.stringify({ documents, dataset }) });
+        const response = await fetch('/api/knowledge/import', { method: 'POST', headers: this.authHeaders(), body: JSON.stringify({ documents, dataset, title: entries.map(e=>e.title).join(', ') }) });
         const data = await response.json();
         if (data.success) totalSuccess += entries.length;
       }
       alert(`成功导入 ${totalSuccess} 条知识！`);
       this.knowledgeEntries = [];
+      this.loadKnowledgeFiles();
     } catch { alert('导入失败'); }
     this.isImporting = false; this.render();
   }
@@ -1737,12 +1781,16 @@ export class ReviewAssistant {
                 <button id="importKnowledgeBtn" class="w-full py-2 px-4 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 text-xs">🚀 按模块分类导入</button>
               </div>
             `:''}
+            <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+              <div class="flex items-center justify-between mb-3"><h3 class="text-sm font-semibold text-gray-900">📚 已入库文件</h3><button id="refreshKnowledgeFilesBtn" class="text-xs text-blue-600 hover:text-blue-800">🔄</button></div>
+              <div id="knowledgeFileList" class="space-y-1.5 max-h-60 overflow-y-auto"><p class="text-xs text-gray-400 text-center py-3">加载中...</p></div>
+            </div>
           </div>
           <!-- 右侧：审核依据配置 + 搜索测试 -->
           <div class="space-y-5">
             <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
               <div class="flex items-center gap-2 mb-3"><span class="text-sm">🎯</span><h3 class="text-sm font-semibold text-gray-900">审核依据配置</h3><span class="text-xs text-gray-400">— 按模块设定审核约束</span></div>
-              <p class="text-xs text-gray-500 mb-3">为每个模块配置审核方式：<b>智能</b>自动检索知识库+联网搜索；<b>范文对比</b>粘贴范文内容让 AI 对照排查差异；<b>文字约束</b>自定义规则检查格式合规性。</p>
+              <p class="text-xs text-gray-500 mb-3">为每个模块配置审核方式：<b>智能</b>自动检索知识库+联网搜索；<b>范文对比</b>从左侧上传范文到对应模块知识库，审核时自动检索对照；<b>文字约束</b>自定义规则检查格式合规性。</p>
               <div class="space-y-3">
                 ${Object.entries(REVIEW_TYPES).filter(([k])=>k!=='comprehensive').map(([key,config])=>{
                   const mc = this.moduleConstraints[key] || { mode: 'none' as const };
@@ -1760,10 +1808,7 @@ export class ReviewAssistant {
                       <div class="text-xs text-green-600 bg-green-50 rounded p-1.5 flex items-center gap-1.5"><span>🧠</span><span>自动检索知识库，知识库不足时联网搜索补全</span></div>
                     `:''}
                     ${mc.mode==='reference'?`
-                      <div class="mc-ref-zone" data-mcmodule="${key}">
-                        <textarea class="w-full border border-purple-200 rounded-lg p-2 text-xs text-gray-700 resize-none focus:ring-1 focus:ring-purple-300 focus:border-purple-400 mc-ref-input" data-mcmodule="${key}" rows="3" placeholder="粘贴范文参考内容，审核时将与之对比...">${mc.fileContent||''}</textarea>
-                        ${mc.fileContent?`<div class="mt-1 p-1.5 bg-purple-50 rounded flex items-center gap-1.5"><span class="text-green-600 text-xs">✅</span><span class="text-xs text-purple-700 truncate flex-1">${mc.fileName||'范文'} (${(mc.fileContent.length/1000).toFixed(1)}k字)</span><button class="mc-file-clear text-xs text-gray-400 hover:text-red-500" data-mcmodule="${key}">✕</button></div>`:''}
-                      </div>
+                      <div class="text-xs text-purple-600 bg-purple-50 rounded p-1.5 flex items-center gap-1.5"><span>📄</span><span>请从左侧上传范文到「${config.label}」模块知识库，审核时自动检索对照</span></div>
                     `:''}
                     ${mc.mode==='rules'?`
                       <div class="mc-rules-zone" data-mcmodule="${key}">
@@ -1930,40 +1975,16 @@ export class ReviewAssistant {
       const mode = (btn as HTMLElement).dataset.mcmode as 'smart' | 'reference' | 'rules';
       if (module && mode) {
         if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'smart' };
-        this.moduleConstraints[module].mode = mode;
-        // 保存当前输入框中的范文/约束内容
-        const refInput = document.querySelector(`.mc-ref-input[data-mcmodule="${module}"]`) as HTMLTextAreaElement;
-        if (refInput && this.moduleConstraints[module].mode === 'reference') {
-          this.moduleConstraints[module].fileContent = refInput.value;
-        }
+        // 切换前保存当前文字约束输入
         const rulesInput = document.querySelector(`.mc-rules-input[data-mcmodule="${module}"]`) as HTMLTextAreaElement;
         if (rulesInput) {
           this.moduleConstraints[module].rules = rulesInput.value;
         }
+        this.moduleConstraints[module].mode = mode;
         this.render();
       }
     }));
 
-    // 范文内容输入（纯文本粘贴，不再有文件上传）
-    document.querySelectorAll('.mc-ref-input').forEach(ta => {
-      const module = (ta as HTMLElement).dataset.mcmodule as string;
-      ta.addEventListener('input', () => {
-        if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'reference' };
-        this.moduleConstraints[module].fileContent = (ta as HTMLTextAreaElement).value;
-        this.moduleConstraints[module].fileName = '范文内容';
-      });
-    });
-    // 范文内容清除
-    document.querySelectorAll('.mc-file-clear').forEach(btn => {
-      const module = (btn as HTMLElement).dataset.mcmodule as string;
-      btn.addEventListener('click', () => {
-        if (this.moduleConstraints[module]) {
-          this.moduleConstraints[module].fileContent = '';
-          this.moduleConstraints[module].fileName = '';
-        }
-        this.render();
-      });
-    });
     // 文字约束保存（按模块）
     document.querySelectorAll('.mc-rules-input').forEach(ta => {
       const module = (ta as HTMLElement).dataset.mcmodule as string;
@@ -2078,6 +2099,14 @@ export class ReviewAssistant {
       const target = (btn as HTMLElement).dataset.target as ReviewType;
       (document.getElementById('knowledgeTitle') as HTMLInputElement).dataset.targetReviewType = target;
     }));
+
+    // 知识库文件列表刷新
+    document.getElementById('refreshKnowledgeFilesBtn')?.addEventListener('click', () => {
+      const el = document.getElementById('knowledgeFileList');
+      if (el) el.innerHTML = '<p class="text-xs text-gray-400 text-center py-3">加载中...</p>';
+      this.knowledgeFiles = [];
+      this.loadKnowledgeFiles();
+    });
     document.querySelectorAll('.knowledge-type-btn').forEach(btn => btn.addEventListener('click', () => {
       const ktype = (btn as HTMLElement).dataset.ktype;
       document.querySelectorAll('.knowledge-type-btn').forEach(b => { b.classList.remove('border-blue-500','bg-blue-50','ring-2','ring-blue-200'); b.classList.add('border-gray-200'); });

@@ -1381,7 +1381,7 @@ router.delete('/api/reviews/:id', requireAuth, async (req: Request, res: Respons
 // ==================== 知识库导入（仅admin） ====================
 router.post('/api/knowledge/import', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { documents, dataset, reviewType } = req.body;
+    const { documents, dataset, reviewType, title } = req.body;
     if (!documents || !Array.isArray(documents) || documents.length === 0) {
       res.status(400).json({ error: '缺少文档数据' });
       return;
@@ -1413,6 +1413,30 @@ router.post('/api/knowledge/import', requireAdmin, async (req: Request, res: Res
     }
 
     const successCount = results.filter((r) => !r.error).length;
+
+    // 保存文件记录到 knowledge_files 表
+    if (successCount > 0) {
+      try {
+        const supabase: AnyClient = await getSupabaseClient();
+        for (const doc of documents) {
+          const fileTitle = title || (doc.type === 'url' ? doc.url : doc.content?.substring(0, 50) + '...') || '未命名文档';
+          const contentPreview = (doc.content || '').substring(0, 200);
+          const docId = results.find(r => r.docIds)?.docIds?.[0]?.toString() || '';
+          for (const ds of targetDatasets) {
+            await supabase.from('knowledge_files').insert({
+              title: fileTitle,
+              dataset: ds,
+              doc_id: docId,
+              content_preview: contentPreview,
+              source_type: doc.type || 'text',
+            });
+          }
+        }
+      } catch (dbErr) {
+        console.error('保存文件记录失败（不影响导入）:', dbErr);
+      }
+    }
+
     res.json({ success: successCount > 0, message: `成功导入到 ${successCount}/${targetDatasets.length} 个数据集`, results, datasets: targetDatasets });
   } catch (error) {
     console.error('Knowledge import error:', error);
@@ -1482,6 +1506,37 @@ router.get('/api/knowledge/datasets', requireAdmin, (_req: Request, res: Respons
     { id: 'coze_doc_knowledge', name: '通用法规', reviewType: 'comprehensive', icon: '📚', description: '建设工程安全生产管理条例等通用法规' },
   ];
   res.json({ success: true, datasets });
+});
+
+// ==================== 知识库文件管理（仅管理员） ====================
+router.get('/api/knowledge/files', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const supabase: AnyClient = await getSupabaseClient();
+    const dataset = req.query.dataset as string | undefined;
+    let query = supabase.from('knowledge_files').select('*').order('created_at', { ascending: false });
+    if (dataset) query = query.eq('dataset', dataset);
+    const { data, error } = await query;
+    if (error) { res.status(500).json({ success: false, error: error.message }); return; }
+    res.json({ success: true, files: data || [] });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
+router.delete('/api/knowledge/files/:id', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const supabase: AnyClient = await getSupabaseClient();
+    const { id } = req.params;
+    const { data: file, error: fetchError } = await supabase.from('knowledge_files').select('*').eq('id', id).single();
+    if (fetchError || !file) { res.status(404).json({ success: false, error: '文件记录不存在' }); return; }
+    const { error: deleteError } = await supabase.from('knowledge_files').delete().eq('id', id);
+    if (deleteError) { res.status(500).json({ success: false, error: deleteError.message }); return; }
+    res.json({ success: true, message: `已删除文件记录「${file.title}」` });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, error: msg });
+  }
 });
 
 export default router;
