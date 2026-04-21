@@ -199,6 +199,8 @@ export class ReviewAssistant {
   }
 
   private dbStats: { usedMB: number; totalMB: number; remainingMB: number; usagePercent: number; tables: Record<string, {count: number}>; dataSource: string } | null = null;
+  private usageLogs: Array<{ user: { username: string; displayName: string; role: string }; totalCount: number; recentRecords: Array<{ id: string; fileName: string; reviewType: string; reviewMode: string; status: string; createdAt: string }> }> = [];
+  private usageLogsTotal = 0;
 
   private async loadDbStats() {
     if (!this.isAdmin()) return;
@@ -239,6 +241,56 @@ export class ReviewAssistant {
     `;
   }
 
+  private async loadUsageLogs() {
+    if (!this.isAdmin()) return;
+    try {
+      const res = await fetch('/api/usage-logs', { headers: this.authHeaders() });
+      const data = await res.json();
+      if (data.success && data.data) {
+        this.usageLogs = data.data;
+        this.usageLogsTotal = data.totalRecords || 0;
+        this.renderUsageLogs();
+      }
+    } catch (error) { console.error('加载使用记录失败:', error); }
+  }
+
+  private renderUsageLogs() {
+    const el = document.getElementById('usageLogsContent');
+    if (!el) return;
+    if (this.usageLogs.length === 0) { el.innerHTML = '<p class="text-xs text-gray-400 py-4 text-center">暂无使用记录</p>'; return; }
+
+    el.innerHTML = this.usageLogs.map((g, idx) => {
+      const roleTag = g.user.role === 'admin' ? '<span class="text-xs px-1.5 py-0.5 rounded bg-red-50 text-red-600">管理员</span>' : g.user.role === 'guest' ? '<span class="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">游客</span>' : '<span class="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">用户</span>';
+      const statusIcon = (s: string) => s === 'completed' ? '<span class="text-green-500">✓</span>' : s === 'failed' ? '<span class="text-red-500">✗</span>' : '<span class="text-yellow-500">⏳</span>';
+      const typeLabel = (t: string) => { const c = REVIEW_TYPES[t as ReviewType]; return c ? `${c.icon} ${c.label}` : t; };
+      const fmtTime = (t: string) => { try { return new Date(t).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); } catch { return t; } };
+
+      return `
+        <div class="border border-gray-100 rounded-lg overflow-hidden">
+          <div class="flex items-center gap-2 px-3 py-2 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors usage-log-toggle" data-idx="${idx}">
+            <div class="w-6 h-6 ${g.user.role==='admin'?'bg-red-100 text-red-600':'bg-blue-100 text-blue-600'} rounded-full flex items-center justify-center text-xs font-bold">${g.user.displayName.charAt(0)}</div>
+            <span class="text-sm font-medium text-gray-900 flex-1">${g.user.displayName}</span>
+            ${roleTag}
+            <span class="text-xs text-gray-500">${g.totalCount} 次审核</span>
+            <svg class="w-4 h-4 text-gray-400 transition-transform usage-log-arrow" data-idx="${idx}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </div>
+          <div class="hidden usage-log-detail" data-idx="${idx}">
+            <div class="px-3 py-1.5 space-y-1 max-h-48 overflow-y-auto">
+              ${g.recentRecords.map(r => `
+                <div class="flex items-center gap-2 text-xs py-1 border-b border-gray-50 last:border-0">
+                  ${statusIcon(r.status)}
+                  <span class="text-gray-800 font-medium truncate flex-1" title="${r.fileName}">${r.fileName}</span>
+                  <span class="text-gray-400 whitespace-nowrap">${typeLabel(r.reviewType)}</span>
+                  <span class="text-gray-300 whitespace-nowrap">${fmtTime(r.createdAt)}</span>
+                </div>
+              `).join('')}
+              ${g.totalCount > 20 ? `<div class="text-xs text-gray-400 text-center py-1">仅显示最近 20 条</div>` : ''}
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
   // ==================== 文件和审核 ====================
   addFiles(files: File[]) {
     const validTypes = ['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','image/jpeg','image/png','image/jpg'];
@@ -260,7 +312,7 @@ export class ReviewAssistant {
   setRole(role: Role) { this.role = role; this.render(); }
   setActiveTab(tab: TabView) {
     this.activeTab = tab;
-    if (tab === 'admin') { this.loadManagedUsers(); this.loadDbStats(); }
+    if (tab === 'admin') { this.loadManagedUsers(); this.loadDbStats(); this.loadUsageLogs(); }
     this.render();
   }
 
@@ -1748,6 +1800,14 @@ export class ReviewAssistant {
           </div>
           <div id="dbStatsContent" class="text-xs text-gray-500">加载中...</div>
         </div>
+        <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2"><span class="text-sm">📊</span><h3 class="text-sm font-semibold text-gray-900">用户使用记录</h3><span class="text-xs text-gray-400">共 ${this.usageLogsTotal} 次审核</span></div>
+            <button id="refreshUsageLogsBtn" class="text-xs text-blue-600 hover:text-blue-800 transition-colors">🔄 刷新</button>
+          </div>
+          <p class="text-xs text-gray-400 mb-3">仅记录文件名与审核信息，不上传存储文件内容</p>
+          <div id="usageLogsContent" class="space-y-2 max-h-[400px] overflow-y-auto">${this.usageLogs.length === 0 ? '<p class="text-xs text-gray-400 py-4 text-center">加载中...</p>' : ''}</div>
+        </div>
         <div class="grid-layout">
           <div class="space-y-5">
             <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
@@ -2087,6 +2147,25 @@ export class ReviewAssistant {
       if (el) el.textContent = '加载中...';
       this.dbStats = null;
       this.loadDbStats();
+    });
+
+    // 使用记录刷新
+    document.getElementById('refreshUsageLogsBtn')?.addEventListener('click', () => {
+      const el = document.getElementById('usageLogsContent');
+      if (el) el.innerHTML = '<p class="text-xs text-gray-400 py-4 text-center">加载中...</p>';
+      this.usageLogs = [];
+      this.loadUsageLogs();
+    });
+
+    // 使用记录折叠切换
+    document.querySelectorAll('.usage-log-toggle').forEach(header => {
+      header.addEventListener('click', () => {
+        const idx = (header as HTMLElement).dataset.idx;
+        const detail = document.querySelector(`.usage-log-detail[data-idx="${idx}"]`);
+        const arrow = document.querySelector(`.usage-log-arrow[data-idx="${idx}"]`);
+        if (detail) detail.classList.toggle('hidden');
+        if (arrow) arrow.classList.toggle('rotate-180');
+      });
     });
 
     // Admin 管理事件

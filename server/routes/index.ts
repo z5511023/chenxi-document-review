@@ -732,6 +732,69 @@ router.get('/api/db-stats', requireAdmin, async (_req: Request, res: Response) =
   }
 });
 
+// ==================== 用户使用记录（仅管理员） ====================
+router.get('/api/usage-logs', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const supabase: AnyClient = await getSupabaseClient();
+    const limit = Math.min(parseInt(req.query.limit as string) || 100, 200);
+
+    // 查询所有用户
+    const { data: users, error: usersError } = await supabase
+      .from('users')
+      .select('id, username, display_name, role');
+    if (usersError) { res.status(500).json({ success: false, error: '查询用户失败' }); return; }
+
+    // 查询审核记录（仅取文件名、类型、时间、状态、用户ID，不取 result 大字段）
+    const { data: records, error: recordsError } = await supabase
+      .from('review_records')
+      .select('id, file_name, review_type, review_mode, status, created_at, user_id')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (recordsError) { res.status(500).json({ success: false, error: '查询记录失败' }); return; }
+
+    // 按用户维度聚合
+    const userMap = new Map<string, { username: string; displayName: string; role: string }>();
+    for (const u of (users || [])) {
+      userMap.set(u.id, { username: u.username, displayName: u.display_name || u.username, role: u.role });
+    }
+    // 游客记录
+    userMap.set('guest', { username: '游客', displayName: '游客', role: 'guest' });
+
+    // 按用户分组
+    const grouped: Record<string, { user: { username: string; displayName: string; role: string }; records: Array<{ id: string; fileName: string; reviewType: string; reviewMode: string; status: string; createdAt: string }> }> = {};
+    for (const r of (records || [])) {
+      const uid = r.user_id || 'guest';
+      if (!grouped[uid]) {
+        const u = userMap.get(uid) || { username: '未知用户', displayName: '未知用户', role: 'unknown' };
+        grouped[uid] = { user: u, records: [] };
+      }
+      grouped[uid].records.push({
+        id: r.id,
+        fileName: r.file_name,
+        reviewType: r.review_type,
+        reviewMode: r.review_mode,
+        status: r.status,
+        createdAt: r.created_at,
+      });
+    }
+
+    // 转为数组并计算统计
+    const result = Object.entries(grouped).map(([_uid, g]) => ({
+      user: g.user,
+      totalCount: g.records.length,
+      recentRecords: g.records.slice(0, 20), // 每个用户最多返回最近20条
+    }));
+
+    // 按审核数量降序
+    result.sort((a, b) => b.totalCount - a.totalCount);
+
+    res.json({ success: true, data: result, totalRecords: (records || []).length });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
 // ==================== 登录 ====================
 router.post('/api/auth/login', async (req: Request, res: Response) => {
   try {
