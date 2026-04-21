@@ -1782,7 +1782,15 @@ export class ReviewAssistant {
               </div>
             `:''}
             <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-              <div class="flex items-center justify-between mb-3"><h3 class="text-sm font-semibold text-gray-900">📚 已入库文件</h3><button id="refreshKnowledgeFilesBtn" class="text-xs text-blue-600 hover:text-blue-800">🔄</button></div>
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-semibold text-gray-900">📚 已入库文件</h3>
+                <div class="flex items-center gap-2">
+                  <button id="autoUpdateStandardsBtn" class="text-xs px-2.5 py-1 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white hover:from-green-600 hover:to-emerald-700 transition-all shadow-sm flex items-center gap-1" title="自动下载并补齐国家法律法规+强制性GB标准+行业强制标准">⚡ 补齐标准</button>
+                  <button id="refreshKnowledgeFilesBtn" class="text-xs text-blue-600 hover:text-blue-800">🔄</button>
+                </div>
+              </div>
+              <p class="text-xs text-gray-400 mb-2">按国家法律法规 + 强制性国标(GB) + 行业标准自动补齐</p>
+              <div id="autoUpdateResult" class="hidden mb-2"></div>
               <div id="knowledgeFileList" class="space-y-1.5 max-h-60 overflow-y-auto"><p class="text-xs text-gray-400 text-center py-3">加载中...</p></div>
             </div>
           </div>
@@ -2106,6 +2114,38 @@ export class ReviewAssistant {
       if (el) el.innerHTML = '<p class="text-xs text-gray-400 text-center py-3">加载中...</p>';
       this.knowledgeFiles = [];
       this.loadKnowledgeFiles();
+    });
+
+    // 自动补齐标准
+    document.getElementById('autoUpdateStandardsBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('autoUpdateStandardsBtn') as HTMLElement;
+      const resultEl = document.getElementById('autoUpdateResult');
+      if (!btn || !resultEl) return;
+      btn.innerHTML = '<span class="animate-spin inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full"></span> 补齐中...';
+      btn.setAttribute('disabled', 'true');
+      resultEl.classList.remove('hidden');
+      resultEl.innerHTML = '<div class="text-xs text-blue-600 bg-blue-50 rounded-lg p-2 flex items-center gap-2"><span class="animate-spin inline-block w-3 h-3 border-2 border-blue-300 border-t-blue-600 rounded-full"></span>正在对比并补齐最新行业标准，请稍候...</div>';
+      try {
+        const res = await fetch('/api/knowledge/auto-update-standards', { method: 'POST', headers: this.authHeaders() });
+        const data = await res.json();
+        if (data.success) {
+          const r = data.result;
+          let html = `<div class="text-xs rounded-lg p-2.5 bg-green-50 border border-green-200"><div class="font-semibold text-green-800 mb-1.5">${data.message}</div>`;
+          if (r.added.length > 0) html += `<div class="text-green-700 mb-1">✅ 新增 ${r.added.length} 项：${r.added.slice(0, 5).join('、')}${r.added.length > 5 ? '...' : ''}</div>`;
+          if (r.skipped.length > 0) html += `<div class="text-gray-600 mb-1">⏭️ 跳过 ${r.skipped.length} 项（已存在且内容一致）</div>`;
+          if (r.updated.length > 0) html += `<div class="text-amber-700 mb-1">🔄 更新 ${r.updated.length} 项：${r.updated.join('、')}</div>`;
+          if (r.errors.length > 0) html += `<div class="text-red-600">❌ 失败 ${r.errors.length} 项：${r.errors.join('；')}</div>`;
+          html += '</div>';
+          resultEl.innerHTML = html;
+          this.loadKnowledgeFiles();
+        } else {
+          resultEl.innerHTML = `<div class="text-xs text-red-600 bg-red-50 rounded-lg p-2">❌ ${data.error || '补齐失败'}</div>`;
+        }
+      } catch (error) {
+        resultEl.innerHTML = `<div class="text-xs text-red-600 bg-red-50 rounded-lg p-2">❌ 网络错误：${error}</div>`;
+      }
+      btn.innerHTML = '⚡ 补齐标准';
+      btn.removeAttribute('disabled');
     });
     document.querySelectorAll('.knowledge-type-btn').forEach(btn => btn.addEventListener('click', () => {
       const ktype = (btn as HTMLElement).dataset.ktype;
