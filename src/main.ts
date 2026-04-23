@@ -236,7 +236,7 @@ export class ReviewAssistant {
           <span class="text-slate-400">${s.dataSource === 'rpc' ? '实际数据' : '估算数据'}</span>
         </div>
       </div>
-      <div class="border-t pt-2 space-y-1" style="border-color:var(--color-slate-100)">
+      <div class="border-t pt-2 space-y-1" style="border-color:var(--c-border-light)">
         <div class="flex justify-between"><span class="text-slate-500">用户表</span><span class="font-medium text-slate-700">${s.tables?.users?.count ?? 0} 条</span></div>
         <div class="flex justify-between"><span class="text-slate-500">审核记录表</span><span class="font-medium text-slate-700">${s.tables?.review_records?.count ?? 0} 条</span></div>
       </div>
@@ -988,44 +988,30 @@ export class ReviewAssistant {
   private renderHeader(): string {
     const showKnowledge = this.isAdmin();
     const showAdmin = this.isAdmin();
-    const tabs = [
-      { key: 'review', label: '审核', icon: '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>' },
-      ...(showKnowledge ? [{ key: 'knowledge', label: '知识库', icon: '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>' }] : []),
-      ...(showAdmin ? [{ key: 'admin', label: '管理', icon: '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>' }] : []),
-    ];
     return `
-      <header class="bg-white/80 border-b border-gray-200/80 sticky top-0 z-50" style="backdrop-filter: blur(12px);">
+      <header class="bg-white border-b sticky top-0 z-50" style="border-color:var(--c-border)">
         <div class="max-w-7xl mx-auto px-5 h-14 flex items-center justify-between">
           <div class="flex items-center gap-3">
-            <div class="w-9 h-9 rounded-xl flex items-center justify-center" style="background: linear-gradient(135deg, #1e40af, #3b82f6);">
-              <span class="text-white font-bold text-sm tracking-tight">辰</span>
-            </div>
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm" style="background:var(--c-brand)">辰</div>
             <div>
               <div class="font-semibold text-slate-900 text-sm leading-tight">辰溪工程文件审核助手</div>
-              <div class="text-[11px] text-slate-400 font-medium">抽水蓄能电站数字化管控平台</div>
+              <div class="text-[11px] text-slate-400">抽水蓄能电站数字化管控平台</div>
             </div>
           </div>
-          <div class="flex items-center gap-4">
-            <nav class="flex bg-slate-100/80 rounded-lg p-0.5 gap-0.5">
-              ${tabs.map(t => `
-                <button class="main-tab-btn tab-btn flex items-center gap-1.5 ${this.activeTab===t.key?'active':''}" data-tab="${t.key}">
-                  ${t.icon}<span>${t.label}</span>
-                </button>
-              `).join('')}
-            </nav>
-            <div class="flex bg-slate-100/80 rounded-lg p-0.5 gap-0.5">
+          <div class="flex items-center gap-3">
+            <div class="flex bg-slate-100 rounded-lg p-0.5 gap-0.5">
+              <button class="main-tab-btn tab-btn ${this.activeTab==='review'?'active':''}" data-tab="review">审核</button>
+              ${showKnowledge ? `<button class="main-tab-btn tab-btn ${this.activeTab==='knowledge'?'active':''}" data-tab="knowledge">知识库</button>` : ''}
+              ${showAdmin ? `<button class="main-tab-btn tab-btn ${this.activeTab==='admin'?'active':''}" data-tab="admin">管理</button>` : ''}
+            </div>
+            <div class="flex bg-slate-100 rounded-lg p-0.5 gap-0.5">
               <button class="role-btn tab-btn ${this.role==='general'?'active':''}" data-role="general">总包</button>
               <button class="role-btn tab-btn ${this.role==='supervisor'?'active':''}" data-role="supervisor">监理</button>
             </div>
-            <div class="flex items-center gap-2.5 pl-4 border-l border-slate-200">
-              <div class="w-8 h-8 ${this.isAdmin()?'bg-slate-800':'bg-brand-600'} rounded-full flex items-center justify-center text-white text-xs font-semibold">${this.currentUser?.displayName?.charAt(0) || '?'}</div>
-              <div>
-                <div class="text-xs font-medium text-slate-800 leading-tight">${this.currentUser?.displayName || ''}</div>
-                <div class="text-[10px] text-slate-400 font-medium">${this.isAdmin()?'管理员':this.currentUser?.role==='guest'?'游客':'用户'}</div>
-              </div>
-              <button id="logoutBtn" class="btn btn-ghost btn-sm ml-1">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
-              </button>
+            <div class="flex items-center gap-2 pl-3 border-l" style="border-color:var(--c-border)">
+              <div class="w-7 h-7 ${this.isAdmin()?'bg-slate-800':'bg-blue-600'} rounded-full flex items-center justify-center text-white text-xs font-semibold">${this.currentUser?.displayName?.charAt(0) || '?'}</div>
+              <div class="text-xs text-slate-600 font-medium">${this.currentUser?.displayName || ''}</div>
+              <button id="logoutBtn" class="btn btn-ghost btn-sm">退出</button>
             </div>
           </div>
         </div>
@@ -1051,32 +1037,20 @@ export class ReviewAssistant {
     const hasContent = this.files.length > 0 || this.textContent.trim().length > 0;
     return `
       <div class="card">
-        <div class="flex items-center gap-2 mb-3">
-          <div class="w-6 h-6 rounded-md flex items-center justify-center" style="background:var(--color-brand-50)">
-            <svg class="w-3.5 h-3.5" style="color:var(--color-brand-600)" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
-          </div>
-          <h3 class="text-sm font-semibold text-slate-900">文件上传</h3>
-        </div>
+        <h3 class="text-sm font-semibold text-slate-900 mb-3">文件上传</h3>
         <div class="upload-area" id="uploadArea">
-          <svg class="w-9 h-9 mx-auto mb-2.5" style="color:var(--color-brand-400)" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
-          <p class="text-slate-700 text-sm mb-0.5">拖拽文件到此处，或 <span class="font-semibold" style="color:var(--color-brand-600)">点击上传</span></p>
+          <p class="text-slate-700 text-sm mb-1">拖拽文件到此处，或 <span class="font-semibold" style="color:var(--c-brand)">点击上传</span></p>
           <p class="text-xs text-slate-400">PDF / Word / Excel / 图片，20MB 内</p>
         </div>
         <input type="file" id="fileInput" class="hidden" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" />
-        ${this.files.length > 0 ? `<div class="mt-2.5 space-y-1.5">${this.files.map(f => this.renderFileItem(f)).join('')}</div>` : ''}
-        <div class="mt-2.5 pt-2.5 border-t" style="border-color:var(--color-slate-100)">
-          <div class="flex items-center gap-1.5 mb-1.5">
-            <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-            <label class="text-xs font-medium text-slate-500">或直接粘贴文本内容</label>
-          </div>
+        ${this.files.length > 0 ? `<div class="mt-2.5 space-y-1">${this.files.map(f => this.renderFileItem(f)).join('')}</div>` : ''}
+        <div class="mt-3 pt-3 border-t" style="border-color:var(--c-border-light)">
+          <label class="text-xs font-medium text-slate-500 mb-1.5 block">或直接粘贴文本内容</label>
           <textarea id="textContentInput" class="input" rows="2" placeholder="从文件中复制文本内容粘贴到此处...">${this.textContent}</textarea>
-          ${this.textContent.trim() ? '<p class="text-xs mt-1" style="color:var(--color-success-600)">已输入 ' + this.textContent.trim().length + ' 字符</p>' : ''}
+          ${this.textContent.trim() ? '<p class="text-xs mt-1" style="color:var(--c-success)">已输入 ' + this.textContent.trim().length + ' 字符</p>' : ''}
         </div>
-        <div class="mt-2.5 flex gap-2 items-center">
-          <button id="previewFileBtn" class="btn btn-secondary flex-1 ${hasContent?'':'opacity-50 cursor-not-allowed'}">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-            预览解析
-          </button>
+        <div class="mt-3 flex gap-2 items-center">
+          <button id="previewFileBtn" class="btn btn-secondary flex-1 ${hasContent?'':'opacity-50 cursor-not-allowed'}">预览解析</button>
           <span class="text-[10px] text-slate-400">不消耗Token</span>
         </div>
       </div>
@@ -1087,45 +1061,32 @@ export class ReviewAssistant {
     const ext = file.name.split('.').pop()?.toLowerCase() || '';
     const colorMap: Record<string,string> = {pdf:'#dc2626',doc:'#2563eb',docx:'#2563eb',xls:'#16a34a',xlsx:'#16a34a',jpg:'#8b5cf6',jpeg:'#8b5cf6',png:'#8b5cf6'};
     const color = colorMap[ext] || '#64748b';
-    return `<div class="file-item">
-      <div class="w-7 h-7 rounded-md flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0" style="background:${color}">${ext.toUpperCase()}</div>
-      <div class="flex-1 min-w-0"><div class="text-xs font-medium text-slate-800 truncate">${file.name}</div><div class="text-[10px] text-slate-400">${(file.size/1024).toFixed(1)} KB</div></div>
-      <button class="file-remove w-5 h-5 rounded-md hover:bg-slate-200 flex items-center justify-center text-slate-400 hover:text-red-500 transition-colors" data-remove="${file.id}">
-        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-      </button>
-    </div>`;
+    return `<div class="file-item"><div class="w-7 h-7 rounded flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0" style="background:${color}">${ext.toUpperCase()}</div><div class="flex-1 min-w-0"><div class="text-xs font-medium text-slate-800 truncate">${file.name}</div><div class="text-[10px] text-slate-400">${(file.size/1024).toFixed(1)} KB</div></div><button class="file-remove w-5 h-5 rounded hover:bg-slate-200 flex items-center justify-center text-slate-400 hover:text-red-500 text-xs" data-remove="${file.id}">&times;</button></div>`;
   }
 
   private renderReviewSettings(): string {
     return `
       <div class="card">
-        <div class="flex items-center gap-2 mb-3">
-          <div class="w-6 h-6 rounded-md flex items-center justify-center" style="background:var(--color-brand-50)">
-            <svg class="w-3.5 h-3.5" style="color:var(--color-brand-600)" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
-          </div>
-          <h3 class="text-sm font-semibold text-slate-900">审核设置</h3>
-        </div>
+        <h3 class="text-sm font-semibold text-slate-900 mb-3">审核设置</h3>
         <div class="mb-3.5">
           <div class="flex items-center gap-1 mb-2">
             <label class="text-xs font-medium text-slate-600">审核类型</label>
-            <span class="help-tip-type relative inline-flex items-center cursor-help" data-tip="type">
-              <svg class="w-3 h-3 text-slate-400 hover:text-brand-600 transition-colors" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
-            </span>
+            <span class="help-tip-type cursor-help text-xs text-slate-400" data-tip="type">[?]</span>
           </div>
           <div class="grid grid-cols-2 gap-1.5">
             ${Object.entries(REVIEW_TYPES).map(([key,config]) => `
-              <button class="review-type-btn ${this.reviewType===key?'active':''}" data-type="${key}">
-                <span class="text-sm">${config.icon}</span><span class="font-medium text-slate-800">${config.label}</span>
+              <button class="review-type-btn p-2 rounded-lg border text-left transition-all text-xs ${this.reviewType===key?'active':'border-slate-200 hover:border-slate-300'}" data-type="${key}">
+                <span class="text-sm">${config.icon}</span> <span class="font-medium text-slate-800">${config.label}</span>
               </button>
             `).join('')}
           </div>
-          <div id="typeHelpTip" class="hidden mt-2 p-3 rounded-lg text-xs leading-relaxed" style="background:var(--color-brand-50);border:1px solid var(--color-brand-200);color:var(--color-brand-800)">
-            <div class="font-semibold mb-1.5" style="color:var(--color-brand-900)">不同审核类型检索不同的知识库模块</div>
+          <div id="typeHelpTip" class="hidden mt-2 p-3 rounded-lg text-xs leading-relaxed" style="background:var(--c-brand-bg);border:1px solid #bfdbfe;color:#1e40af">
+            <div class="font-semibold mb-1">不同审核类型检索不同的知识库模块</div>
             <div class="space-y-0.5">
-              <div><b>人员资质</b> → 检索特种作业证、安全考核证等标准</div>
-              <div><b>企业资质</b> → 检索营业执照、安全生产许可证等标准</div>
-              <div><b>技术文件</b> → 检索施工方案、技术交底等国家技术标准</div>
-              <div><b>安全检查</b> → 检索安全检查表、风险评估等标准</div>
+              <div><b>人员资质</b> → 特种作业证、安全考核证等标准</div>
+              <div><b>企业资质</b> → 营业执照、安全生产许可证等标准</div>
+              <div><b>技术文件</b> → 施工方案、技术交底等国家技术标准</div>
+              <div><b>安全检查</b> → 安全检查表、风险评估等标准</div>
               <div><b>公文审核</b> → 仅审核格式规范（字体、边距、签章）</div>
               <div><b>全面审核</b> → 检索全部知识库，综合审核</div>
             </div>
@@ -1134,27 +1095,22 @@ export class ReviewAssistant {
         <div>
           <div class="flex items-center gap-1 mb-2">
             <label class="text-xs font-medium text-slate-600">审核模式</label>
-            <span class="help-tip relative inline-flex items-center cursor-help" data-tip="mode">
-              <svg class="w-3 h-3 text-slate-400 hover:text-brand-600 transition-colors" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
-            </span>
+            <span class="help-tip cursor-help text-xs text-slate-400" data-tip="mode">[?]</span>
           </div>
           <div class="flex gap-2">
             ${Object.entries(REVIEW_MODES).map(([key,config]) => `
-              <button class="review-mode-btn flex-1 p-2.5 rounded-lg border text-center transition-all ${this.reviewMode===key?'active':''}" data-mode="${key}">
+              <button class="review-mode-btn flex-1 p-2.5 rounded-lg border text-center transition-all ${this.reviewMode===key?'active':'border-slate-200 hover:border-slate-300'}" data-mode="${key}">
                 <div class="text-lg mb-0.5">${config.icon}</div><div class="text-xs font-medium text-slate-700">${config.label}</div>
               </button>
             `).join('')}
           </div>
-          <div id="modeHelpTip" class="hidden mt-2 p-3 rounded-lg text-xs leading-relaxed" style="background:var(--color-warning-50);border:1px solid var(--color-warning-200);color:var(--color-warning-800)">
-            <div class="font-semibold mb-1.5" style="color:var(--color-warning-900)">快速审核 vs 详细审核</div>
-            <div class="space-y-1">
-              <div><span class="font-medium">快速审核：</span>重点检查关键合规性问题 + 错别字，约 30 秒出结果</div>
-              <div><span class="font-medium">详细审核：</span>逐条对照法规标准全面审核 + 错别字，约 1-2 分钟出结果</div>
-            </div>
+          <div id="modeHelpTip" class="hidden mt-2 p-3 rounded-lg text-xs leading-relaxed" style="background:var(--c-warning-bg);border:1px solid #fde68a;color:#92400e">
+            <div class="font-semibold mb-1">快速审核 vs 详细审核</div>
+            <div><span class="font-medium">快速审核：</span>重点检查关键合规性问题，约 30 秒出结果</div>
+            <div><span class="font-medium">详细审核：</span>逐条对照法规标准全面审核，约 1-2 分钟出结果</div>
           </div>
         </div>
         <button id="startReviewBtn" class="btn btn-primary w-full mt-4" ${this.files.length===0 && this.textContent.trim().length===0?'disabled':''}>
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
           开始审核 ${this.files.length>1?`批量 ${this.files.length} 个文件`:this.files.length===1?'(1个文件)':this.textContent.trim()?'(文本内容)':''}
         </button>
       </div>
@@ -1165,16 +1121,11 @@ export class ReviewAssistant {
     return `
       <div class="card">
         <div class="flex items-center justify-between mb-3">
-          <div class="flex items-center gap-2">
-            <div class="w-6 h-6 rounded-md flex items-center justify-center" style="background:var(--color-slate-100)">
-              <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-            </div>
-            <h3 class="text-sm font-semibold text-slate-900">审核历史</h3>
-          </div>
+          <h3 class="text-sm font-semibold text-slate-900">审核历史</h3>
           ${this.history.length>0?`<span class="badge badge-neutral">${this.history.length}条</span>`:''}
         </div>
-        ${this.currentUser?.role==='guest'?`<div class="text-center py-5 text-slate-400"><svg class="w-8 h-8 mx-auto mb-2 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg><p class="text-xs">游客模式无历史记录</p><p class="text-[10px] text-slate-400">登录后可保存审核记录</p></div>`:
-        this.history.length===0?`<div class="text-center py-5 text-slate-400"><svg class="w-8 h-8 mx-auto mb-2 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg><p class="text-xs">暂无审核记录</p></div>`:
+        ${this.currentUser?.role==='guest'?`<div class="text-center py-5 text-slate-400"><p class="text-xs">游客模式无历史记录</p><p class="text-[10px] text-slate-400 mt-1">登录后可保存审核记录</p></div>`:
+        this.history.length===0?`<div class="text-center py-5 text-slate-400"><p class="text-xs">暂无审核记录</p></div>`:
         `<div class="space-y-1.5 max-h-60 overflow-y-auto">${this.history.map(h => this.renderHistoryItem(h)).join('')}</div>`}
       </div>
     `;
@@ -1185,12 +1136,10 @@ export class ReviewAssistant {
     const statusMap: Record<string,{text:string;cls:string}> = {pending:{text:'等待',cls:'badge-neutral'},processing:{text:'审核中',cls:'badge-brand'},completed:{text:'完成',cls:'badge-success'},failed:{text:'失败',cls:'badge-danger'}};
     const status = statusMap[h.status] || statusMap.pending;
     return `
-      <div class="history-item p-2.5 rounded-lg border border-slate-100 hover:border-slate-200 hover:bg-slate-50/50 cursor-pointer transition-all" data-id="${h.id}">
+      <div class="history-item" data-id="${h.id}">
         <div class="flex items-start justify-between mb-1">
           <div class="flex items-center gap-1.5"><span class="text-sm">${tc.icon}</span><div><div class="text-xs font-medium text-slate-800 truncate max-w-[160px]">${h.file_name}</div><div class="text-[10px] text-slate-400">${tc.label}</div></div></div>
-          <button class="delete-history w-5 h-5 rounded-md hover:bg-red-50 flex items-center justify-center text-slate-400 hover:text-red-500 transition-colors" data-delete="${h.id}">
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-          </button>
+          <button class="delete-history w-5 h-5 rounded hover:bg-red-50 flex items-center justify-center text-slate-400 hover:text-red-500 text-xs" data-delete="${h.id}">&times;</button>
         </div>
         <div class="flex items-center justify-between"><span class="text-[10px] text-slate-400">${this.formatTime(h.created_at)}</span><span class="badge ${status.cls} text-[10px]">${status.text}</span></div>
       </div>
@@ -1211,37 +1160,19 @@ export class ReviewAssistant {
     const escaped = content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     return `
       <div class="h-full flex flex-col">
-        <div class="p-4 border-b" style="border-color:var(--color-slate-100)">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2.5">
-              <div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:var(--color-success-50)">
-                <svg class="w-4 h-4" style="color:var(--color-success-600)" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-              </div>
-              <div>
-                <h3 class="text-sm font-semibold text-slate-900">文件预览</h3>
-                <p class="text-[10px] text-slate-400">共提取 ${charCount.toLocaleString()} 字符（未消耗Token）</p>
-              </div>
-            </div>
-            <div class="flex items-center gap-2">
-              <button id="copyPreviewBtn" class="btn btn-secondary btn-sm">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
-                复制
-              </button>
-              <button id="closePreviewBtn" class="w-7 h-7 rounded-md hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-              </button>
-            </div>
+        <div class="p-4 border-b flex items-center justify-between" style="border-color:var(--c-border)">
+          <div><h3 class="text-sm font-semibold text-slate-900">文件预览</h3><p class="text-[10px] text-slate-400">共提取 ${charCount.toLocaleString()} 字符（未消耗Token）</p></div>
+          <div class="flex items-center gap-2">
+            <button id="copyPreviewBtn" class="btn btn-secondary btn-sm">复制</button>
+            <button id="closePreviewBtn" class="btn btn-ghost btn-sm">&times;</button>
           </div>
         </div>
         <div class="flex-1 overflow-auto p-4">
-          <pre class="text-xs text-slate-700 whitespace-pre-wrap break-all leading-relaxed font-mono bg-slate-50 p-4 rounded-lg border" style="border-color:var(--color-slate-100)">${escaped}</pre>
+          <pre class="text-xs text-slate-700 whitespace-pre-wrap break-all leading-relaxed font-mono bg-slate-50 p-4 rounded-lg border" style="border-color:var(--c-border)">${escaped}</pre>
         </div>
-        <div class="p-3 border-t text-center" style="border-color:var(--color-slate-100);background:var(--color-slate-50)">
+        <div class="p-3 border-t text-center" style="border-color:var(--c-border);background:#f8fafc">
           <p class="text-[10px] text-slate-400 mb-2">确认内容无误后，点击开始审核调用 AI 审核</p>
-          <button id="startReviewFromPreviewBtn" class="btn btn-primary">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-            开始审核
-          </button>
+          <button id="startReviewFromPreviewBtn" class="btn btn-primary">开始审核</button>
         </div>
       </div>
     `;
@@ -1250,30 +1181,13 @@ export class ReviewAssistant {
   private renderEmptyState(): string {
     return `
       <div class="h-full flex flex-col items-center justify-center p-10 text-center">
-        <div class="w-16 h-16 rounded-2xl flex items-center justify-center mb-5" style="background:var(--color-slate-100)">
-          <svg class="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-        </div>
+        <div class="w-14 h-14 rounded-2xl flex items-center justify-center mb-4 bg-slate-100"><span class="text-2xl text-slate-400">审核</span></div>
         <h3 class="text-base font-semibold text-slate-900 mb-1.5">上传文件开始审核</h3>
         <p class="text-slate-500 text-sm max-w-xs">系统根据审核类型检索对应模块知识库，并检测错别字</p>
         <div class="mt-6 grid grid-cols-3 gap-6 text-center">
-          <div>
-            <div class="w-10 h-10 rounded-xl mx-auto mb-1.5 flex items-center justify-center" style="background:var(--color-brand-50)">
-              <svg class="w-5 h-5" style="color:var(--color-brand-600)" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
-            </div>
-            <div class="text-xs font-medium text-slate-600">模块化检索</div>
-          </div>
-          <div>
-            <div class="w-10 h-10 rounded-xl mx-auto mb-1.5 flex items-center justify-center" style="background:var(--color-danger-50)">
-              <svg class="w-5 h-5" style="color:var(--color-danger-600)" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/></svg>
-            </div>
-            <div class="text-xs font-medium text-slate-600">分类标注</div>
-          </div>
-          <div>
-            <div class="w-10 h-10 rounded-xl mx-auto mb-1.5 flex items-center justify-center" style="background:var(--color-success-50)">
-              <svg class="w-5 h-5" style="color:var(--color-success-600)" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-            </div>
-            <div class="text-xs font-medium text-slate-600">AI 审核</div>
-          </div>
+          <div><div class="w-10 h-10 rounded-xl mx-auto mb-1.5 flex items-center justify-center bg-blue-50 text-blue-600 text-lg">查</div><div class="text-xs font-medium text-slate-600">模块化检索</div></div>
+          <div><div class="w-10 h-10 rounded-xl mx-auto mb-1.5 flex items-center justify-center bg-red-50 text-red-600 text-lg">标</div><div class="text-xs font-medium text-slate-600">分类标注</div></div>
+          <div><div class="w-10 h-10 rounded-xl mx-auto mb-1.5 flex items-center justify-center bg-green-50 text-green-600 text-lg">审</div><div class="text-xs font-medium text-slate-600">AI 审核</div></div>
         </div>
       </div>
     `;
@@ -1285,45 +1199,38 @@ export class ReviewAssistant {
 
     const review = this.currentReview!; const result = review.result;
     if (!result) return `<div class="h-full flex items-center justify-center"><p class="text-slate-400">加载中...</p></div>`;
-    const cm: Record<string,{text:string;color:string;bg:string;iconPath:string}> = {
-      pass:{text:'审核通过',color:'var(--color-success-600)',bg:'var(--color-success-50)',iconPath:'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z'},
-      fail:{text:'审核未通过',color:'var(--color-danger-600)',bg:'var(--color-danger-50)',iconPath:'M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z'},
-      warning:{text:'需要整改',color:'var(--color-warning-600)',bg:'var(--color-warning-50)',iconPath:'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z'}
+    const cm: Record<string,{text:string;color:string;bg:string;icon:string}> = {
+      pass:{text:'审核通过',color:'var(--c-success)',bg:'var(--c-success-bg)',icon:'✅'},
+      fail:{text:'审核未通过',color:'var(--c-danger)',bg:'var(--c-danger-bg)',icon:'❌'},
+      warning:{text:'需要整改',color:'var(--c-warning)',bg:'var(--c-warning-bg)',icon:'⚠️'}
     };
     const c = cm[result.conclusion] || cm.warning;
-    const scoreColor = result.score>=80?'var(--color-success-600)':result.score>=60?'var(--color-warning-600)':'var(--color-danger-600)';
-    const scoreBg = result.score>=80?'var(--color-success-500)':result.score>=60?'var(--color-warning-500)':'var(--color-danger-500)';
+    const scoreColor = result.score>=80?'var(--c-success)':result.score>=60?'var(--c-warning)':'var(--c-danger)';
+    const scoreBg = result.score>=80?'var(--c-success)':result.score>=60?'var(--c-warning)':'var(--c-danger)';
     return `
       <div class="h-full flex flex-col">
-        <div class="p-4 border-b" style="border-color:var(--color-slate-100)">
-          <div class="flex items-center justify-between mb-2.5">
-            <div class="flex items-center gap-2.5">
-              <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background:${c.bg}">
-                <svg class="w-5 h-5" style="color:${c.color}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${c.iconPath}"/></svg>
-              </div>
+        <div class="p-4 border-b" style="border-color:var(--c-border)">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+              <span class="text-xl">${c.icon}</span>
               <div>
                 <h3 class="text-sm font-semibold" style="color:${c.color}">${c.text}</h3>
                 <p class="text-[10px] text-slate-400">${REVIEW_TYPES[review.review_type as ReviewType]?.label||''} · ${REVIEW_MODES[review.review_mode as ReviewMode]?.label||''}</p>
               </div>
             </div>
             <div class="flex items-center gap-2">
-              <button id="downloadReportBtn" class="btn btn-secondary btn-sm">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                下载
-              </button>
-              <button id="closeResultBtn" class="w-7 h-7 rounded-md hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-              </button>
+              <button id="downloadReportBtn" class="btn btn-secondary btn-sm">下载</button>
+              <button id="closeResultBtn" class="btn btn-ghost btn-sm">&times;</button>
             </div>
           </div>
           <div class="flex items-center gap-3 flex-wrap">
             <div class="flex items-center gap-1.5"><span class="text-xs text-slate-500">评分</span><span class="text-xl font-bold" style="color:${scoreColor}">${result.score}</span></div>
-            <div class="flex-1 bg-slate-100 rounded-full h-1.5 max-w-[150px]"><div class="h-1.5 rounded-full transition-all" style="width:${result.score}%;background:${scoreBg}"></div></div>
+            <div class="flex-1 bg-slate-100 rounded-full h-1.5 max-w-[150px]"><div class="h-1.5 rounded-full" style="width:${result.score}%;background:${scoreBg}"></div></div>
             ${this.renderKnowledgeSourceBadges()}
           </div>
-          ${(result as any)._totalSegments > 1 ? `<div class="mt-2 px-2.5 py-1.5 rounded-lg flex items-center gap-2 text-xs" style="background:var(--color-brand-50);color:var(--color-brand-700)"><svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg><span>全文分段审核：共 ${(result as any)._totalSegments} 段，每段独立审核后合并结果，全文覆盖无遗漏</span></div>` : ''}
+          ${(result as any)._totalSegments > 1 ? `<div class="mt-2 px-2.5 py-1.5 rounded-lg text-xs" style="background:var(--c-brand-bg);color:var(--c-brand)">全文分段审核：共 ${(result as any)._totalSegments} 段，每段独立审核后合并结果，全文覆盖无遗漏</div>` : ''}
         </div>
-        <div class="px-4 pt-1 flex gap-1 border-b overflow-x-auto" style="border-color:var(--color-slate-100)">
+        <div class="px-4 pt-1 flex gap-1 border-b overflow-x-auto" style="border-color:var(--c-border)">
           <button class="result-tab cat-btn ${this.resultTab==='comparison'?'active':''}" data-tab="comparison">对比标注</button>
           ${(result.issues && result.issues.length > 0) ? `<button class="result-tab cat-btn ${this.resultTab==='issues'?'active':''}" data-tab="issues">问题 (${result.issues.length})</button>` : ''}
           ${result.details ? `<button class="result-tab cat-btn ${this.resultTab==='details'?'active':''}" data-tab="details">分析</button>` : ''}
@@ -1331,7 +1238,7 @@ export class ReviewAssistant {
         </div>
         <div class="flex-1 overflow-y-auto p-4">
           <div id="tab-comparison" class="tab-content ${this.resultTab==='comparison'?'':'hidden'}">${this.renderComparisonView(result)}</div>
-          <div id="tab-issues" class="tab-content ${this.resultTab==='issues'?'':'hidden'}">${!result.issues||result.issues.length===0?'<div class="text-center py-10 text-slate-400"><svg class="w-10 h-10 mx-auto mb-2 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><p class="text-sm">未发现问题</p></div>':`<div class="space-y-3">${result.issues.map(i=>this.renderIssue(i)).join('')}</div>`}</div>
+          <div id="tab-issues" class="tab-content ${this.resultTab==='issues'?'':'hidden'}">${!result.issues||result.issues.length===0?'<div class="text-center py-10 text-slate-400"><p class="text-sm">未发现问题</p></div>':`<div class="space-y-3">${result.issues.map(i=>this.renderIssue(i)).join('')}</div>`}</div>
           <div id="tab-details" class="tab-content ${this.resultTab==='details'?'':'hidden'}"><div class="bg-slate-50 rounded-lg p-3 text-sm text-slate-700 whitespace-pre-wrap">${result.details||'暂无详细分析'}</div></div>
           <div id="tab-references" class="tab-content ${this.resultTab==='references'?'':'hidden'}">${this.renderReferencesTab(result)}</div>
         </div>
@@ -1353,7 +1260,7 @@ export class ReviewAssistant {
         <div class="p-4 border-b border-gray-200">
           <div class="flex items-center justify-between mb-2">
             <div class="flex items-center gap-2">
-              <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background:var(--color-brand-50)"><svg class="w-5 h-5" style="color:var(--color-brand-600)" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg></div>
+              <div class="w-10 h-10 rounded-xl flex items-center justify-center text-lg" style="background:var(--c-brand-bg);color:var(--c-brand)">📁</div>
               <div>
                 <h3 class="font-semibold text-gray-800">批量审核${isStillRunning ? '中' : '完成'}</h3>
                 <p class="text-xs text-gray-500">${REVIEW_TYPES[this.reviewType]?.label||''} \xb7 ${completedCount}/${totalCount} 文件</p>
@@ -1426,7 +1333,7 @@ export class ReviewAssistant {
     const issues = result.issues || [];
     
     if (!annotated && issues.length === 0) {
-      return `<div class="text-center py-10 text-slate-400"><svg class="w-10 h-10 mx-auto mb-2 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg><p class="text-sm">无审核标注数据</p></div>`;
+      return `<div class="text-center py-10 text-slate-400"><p class="text-sm text-slate-400">无审核标注数据</p></div>`;
     }
 
     // 高亮标注内容（左侧原文标注）—— 使用宽松正则兼容 LLM 输出格式差异
@@ -1747,7 +1654,7 @@ export class ReviewAssistant {
     // 生成所有分类内容（全部 tab 显示所有，单分类 tab 只显示对应分类）
     let rightPanelHtml = '';
     if (allIssues.length === 0 && annotated) {
-      rightPanelHtml = `<div class="text-center py-8 text-slate-400"><svg class="w-10 h-10 mx-auto mb-2" style="color:var(--color-success-500)" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><p class="text-sm font-medium text-slate-600">未发现明显问题</p><p class="text-xs mt-1">建议使用"详细审核"模式进行更深入检查</p></div>`;
+      rightPanelHtml = `<div class="text-center py-8 text-slate-400"><p class="text-sm font-medium text-slate-600">未发现明显问题</p><p class="text-xs mt-1">建议使用"详细审核"模式进行更深入检查</p></div>`;
     } else {
       rightPanelHtml += `<div class="flex items-center gap-1.5 flex-wrap mb-3">
         ${tabs.map((tab, idx) => `<button class="review-cat-btn text-xs px-2.5 py-1.5 rounded-lg font-medium transition-all border ${idx === 0 ? tab.activeColor + ' border-transparent shadow-sm' : tab.color + ' hover:bg-gray-200 border-gray-200'}" data-cat="${tab.key}">${tab.icon} ${tab.label} <span class="opacity-70">(${tab.count})</span></button>`).join('')}
@@ -1781,11 +1688,11 @@ export class ReviewAssistant {
       </div>
       <div class="grid grid-cols-5 gap-3">
         <div class="col-span-3">
-          <div class="text-xs font-semibold text-slate-600 mb-1.5 flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>原文标注</div>
-          <div class="rounded-lg p-3 text-xs text-slate-700 leading-relaxed max-h-[500px] overflow-y-auto font-mono whitespace-pre-wrap break-all" style="background:var(--color-slate-50);border:1px solid var(--color-slate-200)">${highlighted || '<span class="text-gray-400">无标注内容</span>'}</div>
+          <div class="text-xs font-semibold text-slate-600 mb-1.5 flex items-center gap-1">原文标注</div>
+          <div class="rounded-lg p-3 text-xs text-slate-700 leading-relaxed max-h-[500px] overflow-y-auto font-mono whitespace-pre-wrap break-all" style="background:#f8fafc;border:1px solid #e2e8f0">${highlighted || '<span class="text-gray-400">无标注内容</span>'}</div>
         </div>
         <div class="col-span-2">
-          <div class="text-xs font-semibold text-slate-600 mb-1.5 flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>审查结果</div>
+          <div class="text-xs font-semibold text-slate-600 mb-1.5 flex items-center gap-1">审查结果</div>
           <div class="space-y-2.5 max-h-[500px] overflow-y-auto">
             ${rightPanelHtml}
           </div>
@@ -1823,20 +1730,18 @@ export class ReviewAssistant {
   private renderKnowledgeTab(): string {
     return `
       <div class="space-y-4">
-        <div class="rounded-xl p-5 text-white" style="background:linear-gradient(135deg, #1e40af, #4f46e5)">
+        <div class="rounded-xl p-5 text-white" style="background:var(--c-brand)">
           <div class="flex items-center gap-3 mb-2">
-            <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
-            </div>
+            <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-xl">📚</div>
             <div><h2 class="text-lg font-bold">知识库管理</h2><p class="text-indigo-200 text-xs">按模块上传标准文件，审核时自动检索匹配</p></div>
           </div>
-          <div class="text-xs text-indigo-200 mt-2 flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>仅管理员可见和操作</div>
+          <div class="text-xs text-indigo-200 mt-2 flex items-center gap-1">仅管理员可见和操作</div>
         </div>
         <div class="grid-layout">
           <!-- 左侧：知识库文件上传 -->
           <div class="space-y-5">
             <div class="card">
-              <div class="flex items-center gap-2 mb-3"><div class="w-6 h-6 rounded-md flex items-center justify-center" style="background:var(--color-success-50)"><svg class="w-3.5 h-3.5" style="color:var(--color-success-600)" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg></div><h3 class="text-sm font-semibold text-slate-900">添加知识到指定模块</h3></div>
+              <h3 class="text-sm font-semibold text-slate-900 mb-3">添加知识到指定模块</h3>
               <div class="mb-3">
                 <label class="text-xs font-medium text-gray-700 mb-1.5 block">目标模块</label>
                 <div class="grid grid-cols-2 gap-1.5">
@@ -1870,7 +1775,7 @@ export class ReviewAssistant {
                   <button id="knowledgeFileClear" class="text-xs text-gray-400 hover:text-red-500">✕</button>
                 </div>
               </div>
-              <button id="addKnowledgeBtn" class="btn btn-primary w-full" style="background:var(--color-success-600)">添加</button>
+              <button id="addKnowledgeBtn" class="btn btn-primary w-full" style="background:var(--c-success)">添加</button>
             </div>
             ${this.knowledgeEntries.length>0?`
               <div class="card">
@@ -1883,8 +1788,8 @@ export class ReviewAssistant {
               <div class="flex items-center justify-between mb-3">
                 <h3 class="text-sm font-semibold text-gray-900">📚 已入库文件</h3>
                 <div class="flex items-center gap-2">
-                  <button id="autoUpdateStandardsBtn" class="btn btn-sm text-white flex items-center gap-1" style="background:linear-gradient(135deg, #16a34a, #059669);border:none" title="自动下载并补齐国家法律法规+强制性GB标准+行业强制标准">⚡ 补齐标准</button>
-                  <button id="refreshKnowledgeFilesBtn" class="text-xs hover:underline" style="color:var(--color-brand-600)">🔄</button>
+                  <button id="autoUpdateStandardsBtn" class="btn btn-sm text-white" style="background:var(--c-success);border:none" title="自动下载并补齐国家法律法规+强制性GB标准+行业强制标准">补齐标准</button>
+                  <button id="refreshKnowledgeFilesBtn" class="text-xs hover:underline" style="color:var(--c-brand)">🔄</button>
                 </div>
               </div>
               <p class="text-xs text-gray-400 mb-2">按国家法律法规 + 强制性国标(GB) + 行业标准自动补齐</p>
@@ -1941,25 +1846,23 @@ export class ReviewAssistant {
   private renderAdminTab(): string {
     return `
       <div class="space-y-4">
-        <div class="rounded-xl p-5 text-white" style="background:linear-gradient(135deg, #991b1b, #c2410c)">
+        <div class="rounded-xl p-5 text-white" style="background:#991b1b">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
-            </div>
+            <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-xl">👥</div>
             <div><h2 class="text-lg font-bold">账号管理</h2><p class="text-red-200 text-xs">管理员专属：创建、修改、删除用户账号</p></div>
           </div>
         </div>
         <div id="dbStatsCard" class="card">
           <div class="flex items-center justify-between mb-3">
             <div class="flex items-center gap-2"><span class="text-sm">💾</span><h3 class="text-sm font-semibold text-gray-900">数据库存储</h3></div>
-            <button id="refreshDbStatsBtn" class="text-xs hover:underline" style="color:var(--color-brand-600) transition-colors">🔄 刷新</button>
+            <button id="refreshDbStatsBtn" class="text-xs hover:underline" style="color:var(--c-brand) transition-colors">🔄 刷新</button>
           </div>
           <div id="dbStatsContent" class="text-xs text-gray-500">加载中...</div>
         </div>
         <div class="card">
           <div class="flex items-center justify-between mb-3">
             <div class="flex items-center gap-2"><span class="text-sm">📊</span><h3 class="text-sm font-semibold text-gray-900">用户使用记录</h3><span class="text-xs text-gray-400">共 ${this.usageLogsTotal} 次审核</span></div>
-            <button id="refreshUsageLogsBtn" class="text-xs hover:underline" style="color:var(--color-brand-600) transition-colors">🔄 刷新</button>
+            <button id="refreshUsageLogsBtn" class="text-xs hover:underline" style="color:var(--c-brand) transition-colors">🔄 刷新</button>
           </div>
           <p class="text-xs text-gray-400 mb-3">仅记录文件名与审核信息，不上传存储文件内容</p>
           <div id="usageLogsContent" class="space-y-2 max-h-[400px] overflow-y-auto">${this.usageLogs.length === 0 ? '<p class="text-xs text-gray-400 py-4 text-center">加载中...</p>' : ''}</div>
@@ -2006,7 +1909,7 @@ export class ReviewAssistant {
 
   private renderLoadingOverlay(): string {
     const tc = REVIEW_TYPES[this.reviewType];
-    return `<div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" style="backdrop-filter:blur(4px)"><div class="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center shadow-2xl"><div class="w-14 h-14 border-4 rounded-full animate-spin mx-auto mb-5" style="border-color:var(--color-brand-100);border-top-color:var(--color-brand-600)"></div><h3 class="font-semibold text-slate-900 mb-2">AI 智能审核中</h3><p id="loadingStatusText" class="text-sm font-medium mb-3" style="color:var(--color-brand-600)">正在准备审核...</p><div class="space-y-1.5 text-sm text-slate-500 mb-4"><div class="flex items-center gap-2 justify-center"><svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>解析文件内容</div><div class="flex items-center gap-2 justify-center"><svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>检索「${tc?.datasetName||'知识库'}」</div><div class="flex items-center gap-2 justify-center"><svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/></svg>检测错别字</div><div class="flex items-center gap-2 justify-center"><svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>AI 分段对比标注</div></div><p class="text-xs text-slate-400 mb-2">长文档将自动分段审核，全文无遗漏</p><div class="w-full rounded-full h-1.5" style="background:var(--color-slate-100)"><div class="h-1.5 rounded-full animate-pulse" style="width:60%;background:var(--color-brand-600)"></div></div></div></div>`;
+    return `<div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50"><div class="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center shadow-xl"><div class="w-12 h-12 border-4 rounded-full animate-spin mx-auto mb-4" style="border-color:#dbeafe;border-top-color:var(--c-brand)"></div><h3 class="font-semibold text-slate-900 mb-2">AI 智能审核中</h3><p id="loadingStatusText" class="text-sm font-medium mb-3" style="color:var(--c-brand)">正在准备审核...</p><div class="space-y-1 text-sm text-slate-500 mb-4"><div>解析文件内容</div><div>检索「${tc?.datasetName||'知识库'}」</div><div>检测错别字</div><div>AI 分段对比标注</div></div><p class="text-xs text-slate-400 mb-2">长文档将自动分段审核，全文无遗漏</p><div class="w-full rounded-full h-1.5 bg-slate-100"><div class="h-1.5 rounded-full animate-pulse" style="width:60%;background:var(--c-brand)"></div></div></div></div>`;
   }
 
   private renderPreviewLoadingOverlay(): string {
@@ -2053,8 +1956,8 @@ export class ReviewAssistant {
     document.getElementById('logoutBtn')?.addEventListener('click', () => this.logout());
 
     // Tab
-    document.querySelectorAll('.main-tab-btn').forEach(btn => btn.addEventListener('click', e => { const tab = (e.target as HTMLElement).dataset.tab as TabView; if (tab) this.setActiveTab(tab); }));
-    document.querySelectorAll('.role-btn').forEach(btn => btn.addEventListener('click', e => { const role = (e.target as HTMLElement).dataset.role as Role; if (role) this.setRole(role); }));
+    document.querySelectorAll('.main-tab-btn').forEach(btn => btn.addEventListener('click', e => { const tab = (e.currentTarget as HTMLElement).dataset.tab as TabView; if (tab) this.setActiveTab(tab); }));
+    document.querySelectorAll('.role-btn').forEach(btn => btn.addEventListener('click', e => { const role = (e.currentTarget as HTMLElement).dataset.role as Role; if (role) this.setRole(role); }));
 
     // 上传
     const uploadArea = document.getElementById('uploadArea');
@@ -2067,7 +1970,7 @@ export class ReviewAssistant {
       fileInput.addEventListener('change', () => { const files = Array.from(fileInput.files||[]); if(files.length>0) this.addFiles(files); fileInput.value=''; });
     }
 
-    document.querySelectorAll('[data-remove]').forEach(btn => btn.addEventListener('click', e => { e.stopPropagation(); const id=(e.target as HTMLElement).dataset.remove; if(id) this.removeFile(id); }));
+    document.querySelectorAll('[data-remove]').forEach(btn => btn.addEventListener('click', e => { e.stopPropagation(); const id=(e.currentTarget as HTMLElement).dataset.remove; if(id) this.removeFile(id); }));
 
     // 文本粘贴输入监听
     const textInput = document.getElementById('textContentInput') as HTMLTextAreaElement;
@@ -2130,10 +2033,10 @@ export class ReviewAssistant {
     }));
 
     document.querySelectorAll('.result-tab').forEach(tab => tab.addEventListener('click', e => {
-      const tabId = (e.target as HTMLElement).dataset.tab as typeof this.resultTab; if(!tabId) return;
+      const tabId = (e.currentTarget as HTMLElement).dataset.tab as typeof this.resultTab; if(!tabId) return;
       this.resultTab = tabId;
-      document.querySelectorAll('.result-tab').forEach(t => { t.classList.remove('border-blue-600','text-blue-600'); t.classList.add('border-transparent','text-gray-500'); });
-      (e.target as HTMLElement).classList.add('border-blue-600','text-blue-600'); (e.target as HTMLElement).classList.remove('border-transparent','text-gray-500');
+      document.querySelectorAll('.result-tab').forEach(t => t.classList.remove('active'));
+      (e.currentTarget as HTMLElement).classList.add('active');
       document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
       document.getElementById(`tab-${tabId}`)?.classList.remove('hidden');
     }));
@@ -2277,7 +2180,7 @@ export class ReviewAssistant {
       else{if(!content){alert('请输入内容');return;} this.addKnowledgeEntry({id:`k-${Date.now()}`,title,type:'text',content,targetDataset:tc.dataset,targetReviewType,createdAt:new Date().toISOString()});}
       titleEl.value='';contentEl.value='';urlEl.value='';
     });
-    document.querySelectorAll('[data-kremove]').forEach(btn => btn.addEventListener('click', e => { const id=(e.target as HTMLElement).dataset.kremove; if(id) this.removeKnowledgeEntry(id); }));
+    document.querySelectorAll('[data-kremove]').forEach(btn => btn.addEventListener('click', e => { const id=(e.currentTarget as HTMLElement).dataset.kremove; if(id) this.removeKnowledgeEntry(id); }));
 
     // 知识库文件上传事件
     const knowledgeFileDropZone = document.getElementById('knowledgeFileDropZone');
