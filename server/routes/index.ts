@@ -1495,6 +1495,7 @@ router.post('/api/knowledge/import', requireAdmin, async (req: Request, res: Res
 
     let targetDatasets: string[];
     if (dataset) targetDatasets = [dataset];
+    else if (reviewType && companyType) targetDatasets = getDatasetsForCompany(reviewType, companyType);
     else if (reviewType && DATASET_MAP[reviewType]) targetDatasets = DATASET_MAP[reviewType];
     else targetDatasets = ['coze_doc_knowledge'];
 
@@ -1535,6 +1536,7 @@ router.post('/api/knowledge/import', requireAdmin, async (req: Request, res: Res
               doc_id: docId,
               content_preview: contentPreview,
               source_type: doc.type || 'text',
+              company_type: companyType || 'public',
             });
           }
         }
@@ -1553,7 +1555,7 @@ router.post('/api/knowledge/import', requireAdmin, async (req: Request, res: Res
 // ==================== 知识库搜索（仅admin） ====================
 router.post('/api/knowledge/search', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { query, topK, reviewType, dataset } = req.body;
+    const { query, topK, reviewType, dataset, companyType } = req.body;
     if (!query) { res.status(400).json({ error: '缺少查询参数' }); return; }
 
     const config = new LLMConfig();
@@ -1562,6 +1564,7 @@ router.post('/api/knowledge/search', requireAdmin, async (req: Request, res: Res
 
     let tableNames: string[] | undefined;
     if (dataset) tableNames = [dataset];
+    else if (reviewType && companyType) tableNames = getDatasetsForCompany(reviewType, companyType);
     else if (reviewType && DATASET_MAP[reviewType]) tableNames = DATASET_MAP[reviewType];
 
     const response = await knowledgeClient.search(query, tableNames, topK || 5, 0.3);

@@ -830,18 +830,29 @@ export class ReviewAssistant {
     const el = document.getElementById('knowledgeFileList');
     if (!el) return;
     if (this.knowledgeFiles.length === 0) { el.innerHTML = '<p class="text-xs text-gray-400 text-center py-3">暂无知识库文件</p>'; return; }
-    const datasetLabels: Record<string, string> = { personnel_qualification: '👤 人员资质', enterprise_qualification: '🏢 企业资质', technical_document: '📐 技术文件', safety_inspection: '🔒 安全检查', document_review: '📄 公文审核', coze_doc_knowledge: '📚 通用法规' };
+    const datasetLabels: Record<string, string> = {
+      personnel_qualification: '👤 人员资质', enterprise_qualification: '🏢 企业资质', technical_document: '📐 技术文件',
+      safety_inspection: '🔒 安全检查', document_review: '📄 公文审核', coze_doc_knowledge: '📚 通用法规',
+      general_personnel: '👤 总包人员', general_enterprise: '🏢 总包企业', general_technical: '📐 总包技术', general_safety: '🔒 总包安全', general_document: '📄 总包公文',
+      supervisor_personnel: '👤 监理人员', supervisor_enterprise: '🏢 监理企业', supervisor_technical: '📐 监理技术', supervisor_safety: '🔒 监理安全', supervisor_document: '📄 监理公文',
+      construction_personnel: '👤 施工人员', construction_enterprise: '🏢 施工企业', construction_technical: '📐 施工技术', construction_safety: '🔒 施工安全', construction_document: '📄 施工公文',
+    };
+    const companyLabels: Record<string, string> = { public: '📚公共', general: '🏗️总包', supervisor: '🔍监理', construction: '⚒️施工' };
     const fmtTime = (t: string) => { try { return new Date(t).toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); } catch { return ''; } };
-    el.innerHTML = this.knowledgeFiles.map(f => `
+    el.innerHTML = this.knowledgeFiles.map(f => {
+      const ct = (f as Record<string,unknown>).company_type as string || 'public';
+      const ctLabel = companyLabels[ct] || '📚公共';
+      return `
       <div class="flex items-center gap-2 p-2 bg-gray-50 rounded-lg group hover:bg-gray-100 transition-colors">
         <span class="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 whitespace-nowrap">${datasetLabels[f.dataset] || f.dataset}</span>
+        <span class="text-[10px] px-1 py-0.5 rounded bg-slate-200 text-slate-600 whitespace-nowrap">${ctLabel}</span>
         <div class="flex-1 min-w-0">
           <div class="text-xs font-medium text-gray-800 truncate" title="${f.title}">${f.title}</div>
           <div class="text-xs text-gray-400">${f.source_type === 'url' ? '🔗 链接' : '📝 文本'} · ${fmtTime(f.created_at)}</div>
         </div>
         <button class="knowledge-file-delete opacity-0 group-hover:opacity-100 text-xs text-red-400 hover:text-red-600 transition-all px-1.5 py-0.5 rounded hover:bg-red-50" data-fid="${f.id}" title="删除">✕</button>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
     // 绑定删除事件
     el.querySelectorAll('.knowledge-file-delete').forEach(btn => {
       btn.addEventListener('click', () => { const fid = (btn as HTMLElement).dataset.fid; if (fid) this.deleteKnowledgeFile(fid); });
@@ -1211,6 +1222,39 @@ export class ReviewAssistant {
             <div><span class="font-medium">快速审核：</span>重点检查关键合规性问题，约 30 秒出结果</div>
             <div><span class="font-medium">详细审核：</span>逐条对照法规标准全面审核，约 1-2 分钟出结果</div>
           </div>
+        </div>
+        <div class="mt-3.5">
+          <label class="text-xs font-medium text-slate-600 mb-2 block">所属单位</label>
+          <div class="grid grid-cols-3 gap-1.5">
+            ${Object.entries(COMPANY_TYPES).map(([key,config]) => `
+              <button class="company-type-btn p-2 rounded-lg border text-center transition-all text-xs ${this.companyType===key?'active':'border-slate-200 hover:border-slate-300'}" data-company="${key}" style="${this.companyType===key?`background:${config.color}15;border-color:${config.color};color:${config.color}`:''}">
+                <div class="text-sm mb-0.5">${config.icon}</div><div class="font-medium" style="color:${this.companyType===key?config.color:'#475569'}">${config.label}</div>
+              </button>
+            `).join('')}
+          </div>
+          <div class="mt-1.5 text-[10px] text-slate-400 leading-relaxed">不同单位使用对应审核标准和知识库</div>
+        </div>
+        <div class="mt-3.5">
+          <div class="flex items-center gap-1 mb-2">
+            <label class="text-xs font-medium text-slate-600">文字约束（PROMPT）</label>
+          </div>
+          ${(() => {
+            const mc = this.moduleConstraints[this.reviewType];
+            const hasRules = mc?.mode === 'rules' && mc.rules?.trim();
+            const defaultRules = DEFAULT_COMPANY_RULES[this.companyType]?.[this.reviewType];
+            return `
+              <div class="flex gap-1 mb-1.5">
+                <button class="mc-mode-btn-review px-2 py-1 rounded text-xs border transition-all ${!hasRules?'border-green-400 bg-green-50 text-green-700':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmode="smart">🧠 智能检索</button>
+                <button class="mc-mode-btn-review px-2 py-1 rounded text-xs border transition-all ${hasRules?'border-amber-400 bg-amber-50 text-amber-600':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmode="rules">📝 文字约束</button>
+              </div>
+              ${hasRules ? `
+                <textarea class="w-full border border-amber-200 rounded-lg p-2 text-xs text-gray-700 resize-none focus:ring-1 focus:ring-amber-300 focus:border-amber-400 mc-rules-input-review" rows="3" placeholder="输入约束条件（PROMPT）">${mc.rules||''}</textarea>
+              ` : `
+                <div class="text-xs text-green-600 bg-green-50 rounded p-2 flex items-center gap-1.5"><span>🧠</span><span>检索顺序：公共知识库 → ${COMPANY_TYPES[this.companyType]?.label||'单位'}私有知识库 → 联网搜索</span></div>
+                ${defaultRules ? `<button class="use-default-rules-btn-review w-full mt-1.5 p-2 border border-dashed border-amber-300 rounded-lg text-xs text-amber-600 hover:bg-amber-50 transition-colors flex items-center justify-center gap-1">📋 使用${COMPANY_TYPES[this.companyType]?.label||'当前单位'}默认约束</button>` : ''}
+              `}
+            `;
+          })()}
         </div>
         <button id="startReviewBtn" class="btn btn-primary w-full mt-4" ${this.files.length===0 && this.textContent.trim().length===0?'disabled':''}>
           开始审核 ${this.files.length>1?`批量 ${this.files.length} 个文件`:this.files.length===1?'(1个文件)':this.textContent.trim()?'(文本内容)':''}
@@ -1845,6 +1889,17 @@ export class ReviewAssistant {
             <div class="card">
               <h3 class="text-sm font-semibold text-slate-900 mb-3">添加知识到指定模块</h3>
               <div class="mb-3">
+                <label class="text-xs font-medium text-gray-700 mb-1.5 block">知识库归属</label>
+                <div class="grid grid-cols-4 gap-1.5">
+                  ${['public','general','supervisor','construction'].map(ct => {
+                    const labels: Record<string,string> = { public:'📚 公共', general:'🏗️ 总包', supervisor:'🔍 监理', construction:'⚒️ 施工' };
+                    const active = this.knowledgeCompanyType === ct;
+                    return `<button class="knowledge-company-btn p-1.5 rounded-lg border text-center transition-all text-xs ${active?'border-blue-500 bg-blue-50 ring-2 ring-blue-200':'border-gray-200 hover:border-gray-300'}" data-kcompany="${ct}">${labels[ct]}</button>`;
+                  }).join('')}
+                </div>
+                <div class="text-[10px] text-gray-400 mt-1">公共=GB/通用法规，单位=各家私有审核标准</div>
+              </div>
+              <div class="mb-3">
                 <label class="text-xs font-medium text-gray-700 mb-1.5 block">目标模块</label>
                 <div class="grid grid-cols-2 gap-1.5">
                   ${Object.entries(REVIEW_TYPES).filter(([k])=>k!=='comprehensive').map(([key,config])=>`
@@ -1917,13 +1972,15 @@ export class ReviewAssistant {
                       
                       <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='rules'?'border-amber-400 bg-amber-50 text-amber-600':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="rules">📝 文字约束</button>
                     </div>
-                    ${mc.mode==='smart'?`
-                      <div class="text-xs text-green-600 bg-green-50 rounded p-1.5 flex items-center gap-1.5"><span>🧠</span><span>自动检索知识库，知识库不足时联网搜索补全</span></div>
+                    ${mc.mode==='smart'||mc.mode==='none'?`
+                      <div class="text-xs text-green-600 bg-green-50 rounded p-1.5 flex items-center gap-1.5"><span>🧠</span><span>检索顺序：公共知识库 → ${COMPANY_TYPES[this.companyType]?.label||'单位'}私有知识库 → 联网搜索</span></div>
                     `:''}
                     
                     ${mc.mode==='rules'?`
                       <div class="mc-rules-zone" data-mcmodule="${key}">
-                        <textarea class="w-full border border-amber-200 rounded-lg p-1.5 text-xs text-gray-700 resize-none focus:ring-1 focus:ring-amber-300 focus:border-amber-400 mc-rules-input" data-mcmodule="${key}" rows="2" placeholder="输入约束条件，如：&#10;- 正文仿宋GB2312三号字&#10;- 页边距上下2.54cm">${mc.rules||''}</textarea>
+                        <div class="text-xs text-amber-600 bg-amber-50 rounded p-1.5 mb-1.5 flex items-center gap-1.5"><span>📝</span><span>检索顺序：文字约束 → 公共知识库 → ${COMPANY_TYPES[this.companyType]?.label||'单位'}私有知识库 → 联网搜索</span></div>
+                        ${DEFAULT_COMPANY_RULES[this.companyType]?.[key] && !mc.rules ? `<button class="use-default-rules-btn w-full mb-1.5 p-2 border border-dashed border-amber-300 rounded-lg text-xs text-amber-600 hover:bg-amber-50 transition-colors flex items-center justify-center gap-1" data-mcmodule="${key}">📋 使用${COMPANY_TYPES[this.companyType]?.label||'当前单位'}默认约束</button>` : ''}
+                        <textarea class="w-full border border-amber-200 rounded-lg p-1.5 text-xs text-gray-700 resize-none focus:ring-1 focus:ring-amber-300 focus:border-amber-400 mc-rules-input" data-mcmodule="${key}" rows="3" placeholder="输入约束条件（PROMPT），如：&#10;- 正文仿宋GB2312三号字&#10;- 页边距上下2.54cm">${mc.rules||''}</textarea>
                       </div>
                     `:''}
                   </div>`;
@@ -2136,6 +2193,38 @@ export class ReviewAssistant {
     document.querySelectorAll('.help-tip').forEach(el => el.addEventListener('click', () => { document.getElementById('modeHelpTip')?.classList.toggle('hidden'); }));
     document.querySelectorAll('.help-tip-type').forEach(el => el.addEventListener('click', () => { document.getElementById('typeHelpTip')?.classList.toggle('hidden'); }));
 
+    // 审核页面 - 模式切换（智能/文字约束）
+    document.querySelectorAll('.mc-mode-btn-review').forEach(btn => btn.addEventListener('click', () => {
+      const mode = (btn as HTMLElement).dataset.mcmode as 'smart' | 'rules';
+      const module = this.reviewType;
+      if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'smart' };
+      this.moduleConstraints[module].mode = mode;
+      if (mode === 'smart') { delete this.moduleConstraints[module].rules; }
+      this.render();
+    }));
+
+    // 审核页面 - 使用默认约束
+    document.querySelectorAll('.use-default-rules-btn-review').forEach(btn => btn.addEventListener('click', () => {
+      const module = this.reviewType;
+      if (module && DEFAULT_COMPANY_RULES[this.companyType]?.[module]) {
+        if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'rules' };
+        this.moduleConstraints[module].mode = 'rules';
+        this.moduleConstraints[module].rules = DEFAULT_COMPANY_RULES[this.companyType][module];
+        this.render();
+      }
+    }));
+
+    // 审核页面 - 文字约束输入保存
+    const rulesInputReview = document.querySelector('.mc-rules-input-review') as HTMLTextAreaElement;
+    if (rulesInputReview) {
+      rulesInputReview.addEventListener('input', () => {
+        const module = this.reviewType;
+        if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'rules' };
+        this.moduleConstraints[module].mode = 'rules';
+        this.moduleConstraints[module].rules = rulesInputReview.value;
+      });
+    }
+
     const startBtn = document.getElementById('startReviewBtn');
     if (startBtn && !startBtn.hasAttribute('disabled')) startBtn.addEventListener('click', () => this.startReview());
 
@@ -2236,6 +2325,19 @@ export class ReviewAssistant {
       btn.classList.add('border-blue-500','bg-blue-50','ring-2','ring-blue-200'); btn.classList.remove('border-gray-200');
       const target = (btn as HTMLElement).dataset.target as ReviewType;
       (document.getElementById('knowledgeTitle') as HTMLInputElement).dataset.targetReviewType = target;
+    }));
+
+    // 知识库归属选择
+    document.querySelectorAll('.knowledge-company-btn').forEach(btn => btn.addEventListener('click', () => {
+      const ct = (btn as HTMLElement).dataset.kcompany as string;
+      if (ct) {
+        this.knowledgeCompanyType = ct;
+        // 更新待导入条目的归属
+        if (this.knowledgeEntries.length > 0) this.knowledgeEntries[this.knowledgeEntries.length-1].companyType = ct;
+        // 更新按钮高亮
+        document.querySelectorAll('.knowledge-company-btn').forEach(b => { b.classList.remove('border-blue-500','bg-blue-50','ring-2','ring-blue-200'); b.classList.add('border-gray-200'); });
+        btn.classList.add('border-blue-500','bg-blue-50','ring-2','ring-blue-200'); btn.classList.remove('border-gray-200');
+      }
     }));
 
     // 知识库文件列表刷新
