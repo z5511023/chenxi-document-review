@@ -451,7 +451,7 @@ export class ReviewAssistant {
     let addedCount = 0;
     for (const file of files) {
       if (!validTypes.includes(file.type)) { alert(`文件 "${file.name}" 格式不支持`); continue; }
-      if (file.size > 20*1024*1024) { alert(`文件 "${file.name}" 超过20MB`); continue; }
+      if (file.size > 50*1024*1024) { alert(`文件 "${file.name}" 超过50MB限制`); continue; }
       this.files.push({ id: `${Date.now()}-${Math.random().toString(36).substr(2,9)}`, name: file.name, size: file.size, type: file.type, file });
       addedCount++;
     }
@@ -522,7 +522,7 @@ export class ReviewAssistant {
             const pdfPromise = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
             pdf = await Promise.race([
               pdfPromise,
-              new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF 解析超时(30s)')), 30000))
+              new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF 解析超时(60s)')), 60000))
             ]);
             console.log(`[文件解析] Worker 模式解析成功，共 ${pdf.numPages} 页`);
           } catch (workerErr) {
@@ -538,7 +538,7 @@ export class ReviewAssistant {
               }).promise;
               pdf = await Promise.race([
                 pdfPromise,
-                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF 主线程解析超时')), 60000))
+                new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF 主线程解析超限(120s)')), 120000))
               ]);
               console.log(`[文件解析] 主线程模式解析成功，共 ${pdf.numPages} 页`);
             } catch (fallbackErr) {
@@ -626,9 +626,9 @@ export class ReviewAssistant {
       }
 
       // 前端截断（预览模式不限，显示全部）
-      if (combinedContent.length > 200000) {
-        const headLen = Math.floor(200000 * 0.8);
-        const tailLen = 200000 - headLen;
+      if (combinedContent.length > 500000) {
+        const headLen = Math.floor(500000 * 0.8);
+        const tailLen = 500000 - headLen;
         combinedContent = combinedContent.substring(0, headLen)
           + '\n\n[... 中间内容因长度限制已省略 ...]\n\n'
           + combinedContent.substring(combinedContent.length - tailLen);
@@ -677,7 +677,7 @@ export class ReviewAssistant {
             this.originalFileContent = combinedContent;
 
             // 截断保护
-            const MAX_CHARS = 100000;
+            const MAX_CHARS = 500000;
             if (combinedContent.length > MAX_CHARS) {
               combinedContent = combinedContent.substring(0, Math.floor(MAX_CHARS * 0.8))
                 + '\n\n[... 中间内容因长度限制已省略 ...]\n\n'
@@ -727,7 +727,7 @@ export class ReviewAssistant {
           this.originalFileContent = combinedContent;
         }
 
-        const MAX_CHARS = 100000;
+        const MAX_CHARS = 500000;
         if (combinedContent.length > MAX_CHARS) {
           combinedContent = combinedContent.substring(0, Math.floor(MAX_CHARS * 0.8))
             + '\n\n[... 中间内容因长度限制已省略 ...]\n\n'
@@ -1206,7 +1206,7 @@ export class ReviewAssistant {
         <h3 class="text-sm font-semibold text-slate-900 mb-3">文件上传</h3>
         <div class="upload-area" id="uploadArea">
           <p class="text-slate-700 text-sm mb-1">拖拽文件到此处，或 <span class="font-semibold" style="color:var(--c-brand)">点击上传</span></p>
-          <p class="text-xs text-slate-400">PDF / Word / Excel / 图片，20MB 内</p>
+          <p class="text-xs text-slate-400">PDF / Word / Excel / 图片，50MB 内</p>
         </div>
         <input type="file" id="fileInput" class="hidden" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" />
         ${this.files.length > 0 ? `<div class="mt-2.5 space-y-1">${this.files.map(f => this.renderFileItem(f)).join('')}</div>` : ''}
