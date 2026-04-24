@@ -329,7 +329,7 @@ function skipApprovalAndTOC(content: string): { skipped: string; body: string } 
         if (approvalKeywords.some(kw => normalizedLine.includes(kw))) foundApproval = true;
         // 报审单通常在第一个章节标题之前结束（如 "一、" "1." "第一章" 等）
         // 同时支持 PDF 提取的带空格版本："1.  工程概况" "第 一 章" 等
-        if (foundApproval && /^(第[一二三四五六七八九十]+[章节]|[一二三四五六七八九十]+[、.]\s|第?\d+[\.、]\s|\d+\.\d+\s|\d+\s+[^\d.])/i.test(normalizedLine.trim())) {
+        if (foundApproval && /^(第[一二三四五六七八九十]+[章节]|[一二三四五六七八九十]+[、.]\s|第?\d+[.、]\s|\d+\.\d+\s|\d+\s+[^\d.])/i.test(normalizedLine.trim())) {
           approvalEnd = i;
           break;
         }
@@ -396,7 +396,7 @@ function splitByChapter(body: string, maxChars: number): ContentChunk[] {
   }
 
   // 章节标题正则：匹配 "第X章" "1." "1.1" "一、" 等
-  const chapterRegex = /^(第[一二三四五六七八九十百]+[章节篇]|[一二三四五六七八九十]+[、．.]\s|第?\d+[\.、．]\s*\S|\d+\.\d+\s+\S)/gm;
+  const chapterRegex = /^(第[一二三四五六七八九十百]+[章节篇]|[一二三四五六七八九十]+[、．.]\s|第?\d+[.、．]\s*\S|\d+\.\d+\s+\S)/gm;
 
   const lines = body.split('\n');
   const sections: Array<{ title: string; startLine: number }> = [];

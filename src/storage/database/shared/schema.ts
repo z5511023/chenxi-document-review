@@ -1,51 +1,27 @@
-import { pgTable, serial, varchar, timestamp, text, jsonb, index } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+// Database schema definitions for reference
+// Actual DB operations use Supabase client, not Drizzle ORM
 
-// 系统表 - 禁止删除
-export const healthCheck = pgTable("health_check", {
-  id: serial().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow(),
-});
+export interface KnowledgeFileRecord {
+  id: string;
+  title: string;
+  dataset: string;
+  doc_id: string | null;
+  content_preview: string | null;
+  source_type: string;
+  company_type: string;
+  created_at: string;
+  updated_at: string;
+}
 
-// 知识库文件记录表
-export const knowledgeFiles = pgTable(
-  "knowledge_files",
-  {
-    id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
-    title: text("title").notNull(),
-    dataset: text("dataset").notNull(),
-    doc_id: text("doc_id"),
-    content_preview: text("content_preview"),
-    source_type: text("source_type").default("text"),
-    company_type: varchar("company_type", { length: 20 }).default("public"),
-    created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-  },
-  (table) => [
-    index("knowledge_files_dataset_idx").on(table.dataset),
-    index("knowledge_files_company_type_idx").on(table.company_type),
-  ]
-);
-
-// 审核记录表
-export const reviewRecords = pgTable(
-  "review_records",
-  {
-    id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
-    file_name: text("file_name").notNull(),
-    review_type: varchar("review_type", { length: 20 }).notNull(),
-    review_mode: varchar("review_mode", { length: 20 }).notNull(),
-    user_role: varchar("user_role", { length: 20 }).notNull().default("general"),
-    company_type: varchar("company_type", { length: 20 }).default("general"),
-    status: varchar("status", { length: 20 }).notNull().default("pending"),
-    result: jsonb("result"),
-    created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow(),
-  },
-  (table) => [
-    index("review_records_status_idx").on(table.status),
-    index("review_records_review_type_idx").on(table.review_type),
-    index("review_records_created_at_idx").on(table.created_at),
-    index("review_records_company_type_idx").on(table.company_type),
-  ]
-);
+export interface ReviewRecordDB {
+  id: string;
+  file_name: string;
+  review_type: string;
+  review_mode: string;
+  user_role: string;
+  company_type: string;
+  status: string;
+  result: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}

@@ -1,3 +1,2 @@
-import { relations } from "drizzle-orm/relations";
-import {  } from "./schema";
-
+// Relations are managed through Supabase directly
+// This file is kept for schema reference only

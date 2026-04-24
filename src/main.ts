@@ -43,6 +43,39 @@ export const COMPANY_TYPES: Record<string, { label: string; icon: string; desc: 
 };
 
 export const DEFAULT_COMPANY_RULES: Record<string, Record<string, string>> = {
+  general: {
+    technical: `EPC总承包单位技术文件审核核心要点
+依据《抽水蓄能电站施工组织设计规范》(T/CEC 5050-2021)及EPC总承包管理模式要求，重点审核：
+
+一、设计施工一体化审核
+设计图纸与施工方案的一致性：核查施工方案是否完全对应设计图纸要求，断面尺寸、结构参数、材料规格等不得偏离设计文件。
+设计优化与变更管理：施工方案中的设计优化建议须有充分技术论证，设计变更须按审批流程执行，严禁擅自变更设计。
+设计施工衔接：土建、机电、金结各专业设计接口清晰，施工工序满足设计受力时序和结构安全要求。
+
+二、施工组织设计全面性审核
+编制依据与合规性：引用规范须现行有效（GB、SL、DL标准），设计图纸、地质勘察报告、施工合同、审批文件齐全。
+施工部署与总平面布置：施工总布置满足抽蓄电站上下水库、引水系统、地下厂房三大系统施工要求，施工道路、风水电、渣场规划合理。
+施工进度计划：总工期、关键节点满足合同要求，关键线路清晰，考虑汛期、停水停电等干扰的工期调整预案。
+
+三、分包管理与协同审核
+分包单位资质与方案审批：分包单位施工方案须总包统一审批，技术负责人签字盖章齐全；超规模专项方案须专家论证。
+专业接口协调：土建、机电、金结交叉施工顺序合理，避免工序冲突，满足水工建筑物沉降、防渗、结构受力时序要求。
+资源配置统筹：管理人员、特种作业人员持证齐全，机械设备、周转材料、劳动力配置满足施工强度要求。
+
+四、质量安全体系审核
+质量保证体系：明确单元工程、分部工程质量目标，验收划分合理，质量通病防控措施具体。
+安全生产管理体系：危险源辨识全面（深基坑、高边坡、隧洞、围堰、大型机械），安全专项措施针对性强。
+环保水保措施：符合水利工程水土保持、生态环保要求，弃渣堆放、污水排放、扬尘控制合规。`,
+    safety: `EPC总承包单位安全审核核心要点
+依据《水利水电工程施工安全管理导则》及抽蓄电站特点，重点审核：
+- 安全生产责任制与组织机构健全性
+- 施工组织设计中安全技术措施完整性与针对性
+- 分包单位安全管理与特种作业人员持证审核
+- 危大工程专项方案编制审批与专家论证合规性
+- 施工围堰、临时用电、高处作业等专项安全措施
+- 应急预案与防洪度汛方案完备性
+- 安全生产费用投入与使用计划合理性`,
+  },
   supervisor: {
     technical: `水利水电工程施工方案监理审核核心重点
 结合水利行业规范、抽蓄/水工建筑物施工特点及监理管控要求，从合规性、安全、质量、技术、管理、危大工程、应急七大维度，梳理监理审核关键要点，适配厂房、引水隧洞、管道、土石方、混凝土、围堰等各类水工专项方案。
@@ -93,27 +126,46 @@ export const DEFAULT_COMPANY_RULES: Record<string, Record<string, string>> = {
 - 特种作业人员持证与设备验收情况
 - 应急预案与防洪度汛方案完备性`,
   },
-  general: {
-    technical: `总包单位技术文件审核核心要点
-作为EPC总承包方，重点审核：
-- 设计图纸与施工方案的一致性
-- 施工组织设计全面性与可执行性
-- 分包单位方案审批与管控措施
-- 施工进度计划与资源配置合理性
-- 质量保证体系与验收标准合规性
-- 安全生产管理体系的健全性
-- 环保水保措施与地方要求符合性`,
-  },
   construction: {
     technical: `施工单位技术文件审核核心要点
-作为施工执行方，重点审核：
-- 施工方案与设计要求、施工合同的符合性
-- 施工工艺与作业条件的适配性
-- 质量控制措施与检验标准完整性
+依据《抽水蓄能电站施工组织设计规范》(T/CEC 5050-2021)及水利水电施工标准，重点审核：
+
+一、施工方案与设计符合性审核
+方案与设计要求一致性：施工方案须严格对应设计图纸和技术规范，断面尺寸、材料规格、施工工艺不得偏离设计要求。
+合同条款符合性：施工方案须满足施工合同约定的技术要求、质量标准和工期节点，合同变更须有书面依据。
+
+二、施工工艺与作业条件审核
+工艺适配性：施工工艺须适配水工地质条件（围岩、软基、岩溶、地下水）和建筑物结构特点，特殊工艺（压力管道焊接、隧洞衬砌、防渗施工）须成熟可靠。
+季节性施工措施：汛期、雨季、冬季、高温施工专项措施完善，重点考虑水流影响、防洪排水、抗渗抗冻特殊要求。
+安全操作规程：每道工序须有明确的安全操作规程和技术交底记录，作业人员须知晓并签字确认。
+
+三、质量控制与检验标准审核
+质量管控体系：建立完善的质量管控流程，关键工序设置质量控制点，执行三检制（自检、互检、专检）。
+检验试验计划：原材料进场验收与复检、试块制作与送检、焊缝探伤、水压试验、防渗检测等试验计划合理，检测频次和标准符合规范。
+质量通病防控：水工渗漏、裂缝、边坡坍塌、混凝土蜂窝麻面、管道焊缝缺陷等质量通病防控措施具体可行。
+
+四、安全技术与操作规程审核
+安全技术措施：深基坑、高边坡、隧洞开挖、围堰施工、高处作业、爆破作业等专项安全措施须有针对性。
+临时设施验算：施工围堰、脚手架、模板支撑体系等临时设施须有承载力与稳定性验算资料。
+特种作业管理：特种作业人员须持证上岗，特种设备须经验收合格后方可使用。
+
+五、施工进度与资源配置审核
+施工进度计划：总工期、关键节点满足合同要求，关键线路清晰，有工期调整预案。
+人材机配置：管理人员、特种作业人员持证齐全，机械设备、周转材料、劳动力配置满足施工强度要求。
+
+六、文明施工与环保措施审核
+环保水保措施：符合水土保持和生态环保要求，弃渣堆放、污水排放、扬尘控制、河道保护措施合规。
+文明施工：施工现场整洁有序，安全标志齐全，临时设施规范。`,
+    safety: `施工单位安全审核核心要点
+依据《水利水电工程施工安全管理导则》及行业规范，重点审核：
 - 安全技术措施与操作规程完备性
-- 人员资质与机械设备配置合理性
-- 施工进度与资源配置的可行性
-- 文明施工与环保措施落实情况`,
+- 施工方案中安全专项措施的针对性
+- 危大工程专项施工方案编制与审批
+- 特种作业人员持证上岗与设备验收
+- 临时设施（围堰、脚手架、模板支撑）验算与安全验收
+- 施工用电安全与大型机械设备管理
+- 应急预案与防洪度汛方案编制与演练
+- 安全生产教育培训与安全技术交底`,
   },
 };
 
@@ -133,6 +185,7 @@ export class ReviewAssistant {
   private activeTab: TabView = 'review';
   private knowledgeEntries: KnowledgeEntry[] = [];
   private knowledgeCompanyType: string = 'public';
+  private knowledgeAdminTab: string = 'public'; // 知识库Tab顶级导航：public/general/supervisor/construction
   private knowledgeFileContent: string = '';
   private knowledgeFileName: string = '';
   // 审核依据：按模块绑定，管理员在知识库中配置
@@ -1178,6 +1231,7 @@ export class ReviewAssistant {
   }
 
   private renderReviewSettings(): string {
+    const currentCompany = COMPANY_TYPES[this.companyType];
     return `
       <div class="card">
         <h3 class="text-sm font-semibold text-slate-900 mb-3">审核设置</h3>
@@ -1234,27 +1288,12 @@ export class ReviewAssistant {
           </div>
           <div class="mt-1.5 text-[10px] text-slate-400 leading-relaxed">不同单位使用对应审核标准和知识库</div>
         </div>
-        <div class="mt-3.5">
-          <div class="flex items-center gap-1 mb-2">
-            <label class="text-xs font-medium text-slate-600">文字约束（PROMPT）</label>
+        <div class="mt-3 p-2.5 rounded-lg border border-slate-200 bg-slate-50">
+          <div class="flex items-center gap-1.5 mb-1">
+            <span class="w-2 h-2 rounded-full" style="background:${currentCompany?.color||'#3b82f6'}"></span>
+            <span class="text-xs font-medium text-slate-700">${currentCompany?.label||'未选择'}审核标准</span>
           </div>
-          ${(() => {
-            const mc = this.moduleConstraints[this.reviewType];
-            const hasRules = mc?.mode === 'rules' && mc.rules?.trim();
-            const defaultRules = DEFAULT_COMPANY_RULES[this.companyType]?.[this.reviewType];
-            return `
-              <div class="flex gap-1 mb-1.5">
-                <button class="mc-mode-btn-review px-2 py-1 rounded text-xs border transition-all ${!hasRules?'border-green-400 bg-green-50 text-green-700':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmode="smart">🧠 智能检索</button>
-                <button class="mc-mode-btn-review px-2 py-1 rounded text-xs border transition-all ${hasRules?'border-amber-400 bg-amber-50 text-amber-600':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmode="rules">📝 文字约束</button>
-              </div>
-              ${hasRules ? `
-                <textarea class="w-full border border-amber-200 rounded-lg p-2 text-xs text-gray-700 resize-none focus:ring-1 focus:ring-amber-300 focus:border-amber-400 mc-rules-input-review" rows="3" placeholder="输入约束条件（PROMPT）">${mc.rules||''}</textarea>
-              ` : `
-                <div class="text-xs text-green-600 bg-green-50 rounded p-2 flex items-center gap-1.5"><span>🧠</span><span>检索顺序：公共知识库 → ${COMPANY_TYPES[this.companyType]?.label||'单位'}私有知识库 → 联网搜索</span></div>
-                ${defaultRules ? `<button class="use-default-rules-btn-review w-full mt-1.5 p-2 border border-dashed border-amber-300 rounded-lg text-xs text-amber-600 hover:bg-amber-50 transition-colors flex items-center justify-center gap-1">📋 使用${COMPANY_TYPES[this.companyType]?.label||'当前单位'}默认约束</button>` : ''}
-              `}
-            `;
-          })()}
+          <div class="text-[11px] text-slate-500 leading-relaxed">检索顺序：公共知识库 → ${currentCompany?.label||'单位'}私有知识库 → 联网搜索</div>
         </div>
         <button id="startReviewBtn" class="btn btn-primary w-full mt-4" ${this.files.length===0 && this.textContent.trim().length===0?'disabled':''}>
           开始审核 ${this.files.length>1?`批量 ${this.files.length} 个文件`:this.files.length===1?'(1个文件)':this.textContent.trim()?'(文本内容)':''}
@@ -1874,30 +1913,61 @@ export class ReviewAssistant {
 
   // ==================== 知识库 Tab ====================
   private renderKnowledgeTab(): string {
+    const tab = this.knowledgeAdminTab;
+    const isPublic = tab === 'public';
+    const companyInfo = COMPANY_TYPES[tab];
+    const tabItems: Array<{key:string;label:string;icon:string;desc:string;color:string}> = [
+      { key:'public', label:'公共', icon:'📚', desc:'GB/通用法规', color:'#3b82f6' },
+      { key:'general', label:'总包', icon:'🏗️', desc:'EPC总包标准', color:'#1e40af' },
+      { key:'supervisor', label:'监理', icon:'🔍', desc:'监理审核标准', color:'#7c3aed' },
+      { key:'construction', label:'施工', icon:'⚒️', desc:'施工执行标准', color:'#b45309' },
+    ];
+
+    // 过滤已入库文件：根据当前tab
+    const filteredFiles = this.knowledgeFiles.filter(f => {
+      // knowledgeFiles 没有company_type字段时显示全部
+      return true;
+    });
+
+    // 获取当前tab对应的默认约束
+    const hasDefaultRules = !isPublic && DEFAULT_COMPANY_RULES[tab];
+
     return `
       <div class="space-y-4">
-        <div class="rounded-xl p-5 text-white" style="background:var(--c-brand)">
-          <div class="flex items-center gap-3 mb-2">
-            <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-xl">📚</div>
-            <div><h2 class="text-lg font-bold">知识库管理</h2><p class="text-indigo-200 text-xs">按模块上传标准文件，审核时自动检索匹配</p></div>
-          </div>
-          <div class="text-xs text-indigo-200 mt-2 flex items-center gap-1">仅管理员可见和操作</div>
+        <!-- 顶级单位Tab导航 -->
+        <div class="flex gap-1.5 p-1 bg-slate-100 rounded-xl">
+          ${tabItems.map(t => `
+            <button class="kb-admin-tab flex-1 py-2.5 px-2 rounded-lg text-center transition-all text-xs font-medium ${tab===t.key ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'}" data-kbtab="${t.key}">
+              <div class="text-base mb-0.5">${t.icon}</div>
+              <div>${t.label}</div>
+            </button>
+          `).join('')}
         </div>
+
+        <!-- 当前Tab标题 -->
+        <div class="rounded-xl p-4 text-white" style="background:${isPublic?'var(--c-brand)':companyInfo?.color||'var(--c-brand)'}">
+          <div class="flex items-center gap-3">
+            <div class="w-9 h-9 bg-white/20 rounded-lg flex items-center justify-center text-lg">${isPublic?'📚':companyInfo?.icon||'📚'}</div>
+            <div>
+              <h2 class="text-base font-bold">${isPublic?'公共知识库':companyInfo?.label+'知识库'}</h2>
+              <p class="text-xs opacity-80 mt-0.5">${isPublic?'国家标准(GB)、行业通用法规，所有单位共享':companyInfo?.desc+'，仅'+companyInfo?.label+'审核时检索'}</p>
+            </div>
+          </div>
+        </div>
+
         <div class="grid-layout">
-          <!-- 左侧：知识库文件上传 -->
-          <div class="space-y-5">
+          <!-- 左侧：文件上传 + 文件列表 -->
+          <div class="space-y-4">
+            <!-- 添加知识 -->
             <div class="card">
               <h3 class="text-sm font-semibold text-slate-900 mb-3">添加知识到指定模块</h3>
               <div class="mb-3">
                 <label class="text-xs font-medium text-gray-700 mb-1.5 block">知识库归属</label>
-                <div class="grid grid-cols-4 gap-1.5">
-                  ${['public','general','supervisor','construction'].map(ct => {
-                    const labels: Record<string,string> = { public:'📚 公共', general:'🏗️ 总包', supervisor:'🔍 监理', construction:'⚒️ 施工' };
-                    const active = this.knowledgeCompanyType === ct;
-                    return `<button class="knowledge-company-btn p-1.5 rounded-lg border text-center transition-all text-xs ${active?'border-blue-500 bg-blue-50 ring-2 ring-blue-200':'border-gray-200 hover:border-gray-300'}" data-kcompany="${ct}">${labels[ct]}</button>`;
-                  }).join('')}
+                <div class="flex items-center gap-2 p-2 rounded-lg border border-blue-200 bg-blue-50 text-xs">
+                  <span class="text-base">${isPublic?'📚':companyInfo?.icon||'📚'}</span>
+                  <span class="font-medium text-blue-700">${isPublic?'公共知识库':companyInfo?.label+'知识库'}</span>
+                  <span class="text-blue-500 ml-auto">${isPublic?'所有单位共享':companyInfo?.label+'私有'}</span>
                 </div>
-                <div class="text-[10px] text-gray-400 mt-1">公共=GB/通用法规，单位=各家私有审核标准</div>
               </div>
               <div class="mb-3">
                 <label class="text-xs font-medium text-gray-700 mb-1.5 block">目标模块</label>
@@ -1934,13 +2004,16 @@ export class ReviewAssistant {
               </div>
               <button id="addKnowledgeBtn" class="btn btn-primary w-full" style="background:var(--c-success)">添加</button>
             </div>
+
             ${this.knowledgeEntries.length>0?`
               <div class="card">
                 <div class="flex items-center justify-between mb-3"><h3 class="text-sm font-semibold text-slate-900">待导入 ${this.knowledgeEntries.length} 条</h3></div>
-                <div class="space-y-1.5 mb-3 max-h-40 overflow-y-auto">${this.knowledgeEntries.map(e=>{const tc=REVIEW_TYPES[e.targetReviewType];const ct=COMPANY_TYPES[e.companyType];const ctLabel=e.companyType==='public'?'📚公共':ct?`${ct.icon}${ct.label}`:'📚公共';return `<div class="flex items-center gap-1.5 p-1.5 bg-gray-50 rounded"><span class="text-xs">${tc?.icon||'📝'}</span><div class="flex-1 min-w-0"><div class="text-xs font-medium text-gray-900 truncate">${e.title}</div><div class="flex items-center gap-1"><span class="text-xs text-blue-600">${tc?.datasetName||''}</span><span class="text-[10px] px-1 py-0.5 rounded bg-slate-200 text-slate-600">${ctLabel}</span></div></div><button class="remove-knowledge text-xs text-gray-400 hover:text-red-500" data-kremove="${e.id}">✕</button></div>`;}).join('')}</div>
+                <div class="space-y-1.5 mb-3 max-h-40 overflow-y-auto">${this.knowledgeEntries.map(e=>{const tc=REVIEW_TYPES[e.targetReviewType];const eCt=COMPANY_TYPES[e.companyType];const ctLabel=e.companyType==='public'?'📚公共':eCt?`${eCt.icon}${eCt.label}`:'📚公共';return `<div class="flex items-center gap-1.5 p-1.5 bg-gray-50 rounded"><span class="text-xs">${tc?.icon||'📝'}</span><div class="flex-1 min-w-0"><div class="text-xs font-medium text-gray-900 truncate">${e.title}</div><div class="flex items-center gap-1"><span class="text-xs text-blue-600">${tc?.datasetName||''}</span><span class="text-[10px] px-1 py-0.5 rounded bg-slate-200 text-slate-600">${ctLabel}</span></div></div><button class="remove-knowledge text-xs text-gray-400 hover:text-red-500" data-kremove="${e.id}">✕</button></div>`;}).join('')}</div>
                 <button id="importKnowledgeBtn" class="btn btn-primary w-full">按模块分类导入</button>
               </div>
             `:''}
+
+            <!-- 已入库文件 -->
             <div class="card">
               <div class="flex items-center justify-between mb-3">
                 <h3 class="text-sm font-semibold text-gray-900">📚 已入库文件</h3>
@@ -1954,39 +2027,73 @@ export class ReviewAssistant {
               <div id="knowledgeFileList" class="space-y-1.5 max-h-60 overflow-y-auto"><p class="text-xs text-gray-400 text-center py-3">加载中...</p></div>
             </div>
           </div>
-          <!-- 右侧：审核依据配置 + 搜索测试 -->
-          <div class="space-y-5">
-            <div class="card">
-              <div class="flex items-center gap-2 mb-3"><span class="text-sm">🎯</span><h3 class="text-sm font-semibold text-gray-900">审核依据配置</h3><span class="text-xs text-gray-400">— 按模块设定审核约束</span></div>
-              <p class="text-xs text-gray-500 mb-3">为每个模块配置审核方式：<b>智能</b>自动检索知识库，不足时联网搜索；<b>文字约束</b>即PROMPT，优先检查约束内容，再检索知识库，最后联网搜索。</p>
-              <div class="space-y-3">
-                ${Object.entries(REVIEW_TYPES).filter(([k])=>k!=='comprehensive').map(([key,config])=>{
-                  const mc = this.moduleConstraints[key] || { mode: 'none' as const };
-                  return `
-                  <div class="border rounded-lg p-2.5">
-                    <div class="flex items-center gap-1.5 mb-2"><span>${config.icon}</span><span class="text-xs font-medium">${config.label}</span>
-                      ${mc.mode === 'rules' ? `<span class="text-xs px-1.5 py-0.5 rounded bg-amber-50 text-amber-600">📝 文字约束</span>` : `<span class="text-xs text-green-600">🧠 智能检索</span>`}
+
+          <!-- 右侧：审核依据配置（仅单位Tab显示）+ 搜索测试 -->
+          <div class="space-y-4">
+            ${isPublic ? `
+              <!-- 公共Tab：仅检索优先级说明 + 搜索测试 -->
+              <div class="card">
+                <div class="flex items-center gap-2 mb-3"><span class="text-sm">🌐</span><h3 class="text-sm font-semibold text-gray-900">公共知识库说明</h3></div>
+                <div class="space-y-2">
+                  <div class="flex items-start gap-2 p-2.5 bg-blue-50 rounded-lg">
+                    <span class="text-blue-500 text-sm mt-0.5">ℹ️</span>
+                    <div class="text-xs text-blue-700 leading-relaxed">
+                      <p class="font-medium mb-1">公共知识库面向所有单位共享</p>
+                      <p>上传的国家标准(GB)、行业通用法规在所有单位的审核中都会被优先检索。</p>
                     </div>
-                    <div class="flex gap-1 mb-1.5">
-                      <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='smart'||mc.mode==='none'?'border-green-400 bg-green-50 text-green-700':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="smart">🧠 智能</button>
-                      
-                      <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='rules'?'border-amber-400 bg-amber-50 text-amber-600':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="rules">📝 文字约束</button>
+                  </div>
+                  <div class="p-2.5 bg-slate-50 rounded-lg border border-slate-200">
+                    <div class="text-xs font-medium text-slate-600 mb-1.5">各单位检索顺序</div>
+                    <div class="space-y-1">
+                      ${Object.entries(COMPANY_TYPES).map(([key, ct]) => `
+                        <div class="flex items-center gap-1.5 text-xs text-slate-600">
+                          <span>${ct.icon}</span>
+                          <span class="font-medium">${ct.label}：</span>
+                          <span>公共知识库 → ${ct.label}私有知识库 → 联网搜索</span>
+                        </div>
+                      `).join('')}
                     </div>
-                    ${mc.mode==='smart'||mc.mode==='none'?`
-                      <div class="text-xs text-green-600 bg-green-50 rounded p-1.5 flex items-center gap-1.5"><span>🧠</span><span>检索顺序：公共知识库 → ${COMPANY_TYPES[this.companyType]?.label||'单位'}私有知识库 → 联网搜索</span></div>
-                    `:''}
-                    
-                    ${mc.mode==='rules'?`
-                      <div class="mc-rules-zone" data-mcmodule="${key}">
-                        <div class="text-xs text-amber-600 bg-amber-50 rounded p-1.5 mb-1.5 flex items-center gap-1.5"><span>📝</span><span>检索顺序：文字约束 → 公共知识库 → ${COMPANY_TYPES[this.companyType]?.label||'单位'}私有知识库 → 联网搜索</span></div>
-                        ${DEFAULT_COMPANY_RULES[this.companyType]?.[key] && !mc.rules ? `<button class="use-default-rules-btn w-full mb-1.5 p-2 border border-dashed border-amber-300 rounded-lg text-xs text-amber-600 hover:bg-amber-50 transition-colors flex items-center justify-center gap-1" data-mcmodule="${key}">📋 使用${COMPANY_TYPES[this.companyType]?.label||'当前单位'}默认约束</button>` : ''}
-                        <textarea class="w-full border border-amber-200 rounded-lg p-1.5 text-xs text-gray-700 resize-none focus:ring-1 focus:ring-amber-300 focus:border-amber-400 mc-rules-input" data-mcmodule="${key}" rows="3" placeholder="输入约束条件（PROMPT），如：&#10;- 正文仿宋GB2312三号字&#10;- 页边距上下2.54cm">${mc.rules||''}</textarea>
-                      </div>
-                    `:''}
-                  </div>`;
-                }).join('')}
+                  </div>
+                </div>
               </div>
-            </div>
+            ` : `
+              <!-- 单位Tab：审核依据配置 -->
+              <div class="card">
+                <div class="flex items-center gap-2 mb-3">
+                  <span class="text-sm">🎯</span>
+                  <h3 class="text-sm font-semibold text-gray-900">${companyInfo?.label||''}审核依据配置</h3>
+                </div>
+                <p class="text-xs text-gray-500 mb-3">为${companyInfo?.label||'当前单位'}各模块配置审核方式。<b>智能</b>自动检索知识库，不足时联网搜索；<b>文字约束</b>即PROMPT，优先检查约束内容，再检索知识库，最后联网搜索。</p>
+                <div class="space-y-3">
+                  ${Object.entries(REVIEW_TYPES).filter(([k])=>k!=='comprehensive').map(([key,config])=>{
+                    const mc = this.moduleConstraints[key] || { mode: 'none' as const };
+                    const hasModuleDefault = DEFAULT_COMPANY_RULES[tab]?.[key];
+                    return `
+                    <div class="border rounded-lg p-2.5">
+                      <div class="flex items-center gap-1.5 mb-2"><span>${config.icon}</span><span class="text-xs font-medium">${config.label}</span>
+                        ${mc.mode === 'rules' ? `<span class="text-xs px-1.5 py-0.5 rounded bg-amber-50 text-amber-600">📝 文字约束</span>` : `<span class="text-xs px-1.5 py-0.5 rounded bg-green-50 text-green-600">🧠 智能检索</span>`}
+                      </div>
+                      <div class="flex gap-1 mb-1.5">
+                        <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='smart'||mc.mode==='none'?'border-green-400 bg-green-50 text-green-700':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="smart" data-mccompany="${tab}">🧠 智能</button>
+                        <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='rules'?'border-amber-400 bg-amber-50 text-amber-600':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="rules" data-mccompany="${tab}">📝 文字约束</button>
+                      </div>
+                      ${mc.mode==='smart'||mc.mode==='none'?`
+                        <div class="text-xs text-green-600 bg-green-50 rounded p-1.5 flex items-center gap-1.5"><span>🧠</span><span>检索顺序：公共知识库 → ${companyInfo?.label||'单位'}私有知识库 → 联网搜索</span></div>
+                      `:''}
+                      ${mc.mode==='rules'?`
+                        <div class="mc-rules-zone" data-mcmodule="${key}">
+                          <div class="text-xs text-amber-600 bg-amber-50 rounded p-1.5 mb-1.5 flex items-center gap-1.5"><span>📝</span><span>检索顺序：文字约束 → 公共知识库 → ${companyInfo?.label||'单位'}私有知识库 → 联网搜索</span></div>
+                          ${hasModuleDefault && !mc.rules ? `<button class="use-default-rules-btn w-full mb-1.5 p-2 border border-dashed border-amber-300 rounded-lg text-xs text-amber-600 hover:bg-amber-50 transition-colors flex items-center justify-center gap-1" data-mcmodule="${key}" data-mccompany="${tab}">📋 使用${companyInfo?.label||'当前单位'}默认约束</button>` : ''}
+                          ${!hasModuleDefault && !mc.rules ? `<div class="mb-1.5 p-2 border border-red-200 bg-red-50 rounded-lg text-xs text-red-600 flex items-center gap-1.5"><span>⚠️</span><span>暂无${companyInfo?.label||''}预设${config.label}约束，请管理员自行填写</span></div>` : ''}
+                          <textarea class="w-full border border-amber-200 rounded-lg p-1.5 text-xs text-gray-700 resize-none focus:ring-1 focus:ring-amber-300 focus:border-amber-400 mc-rules-input" data-mcmodule="${key}" data-mccompany="${tab}" rows="3" placeholder="输入约束条件（PROMPT），如：&#10;- 正文仿宋GB2312三号字&#10;- 页边距上下2.54cm">${mc.rules||''}</textarea>
+                        </div>
+                      `:''}
+                    </div>`;
+                  }).join('')}
+                </div>
+              </div>
+            `}
+            <!-- 搜索测试 -->
             <div class="card">
               <h3 class="text-sm font-semibold text-gray-900 mb-3">🔎 搜索测试</h3>
               <div class="mb-2"><select id="searchTestModule" class="w-full px-2 py-1.5 border border-gray-300 rounded-lg text-xs"><option value="">全部模块</option>${Object.entries(REVIEW_TYPES).map(([key,config])=>`<option value="${key}">${config.icon} ${config.label}</option>`).join('')}</select></div>
@@ -2147,10 +2254,11 @@ export class ReviewAssistant {
     document.querySelectorAll('.review-type-btn').forEach(btn => btn.addEventListener('click', () => { const type=(btn as HTMLElement).dataset.type as ReviewType; if(type) this.setReviewType(type); }));
     document.querySelectorAll('.review-mode-btn').forEach(btn => btn.addEventListener('click', () => { const mode=(btn as HTMLElement).dataset.mode as ReviewMode; if(mode) this.setReviewMode(mode); }));
 
-    // 审核依据模式切换（按模块）
+    // 审核依据模式切换（按模块 + 按单位Tab）
     document.querySelectorAll('.mc-mode-btn').forEach(btn => btn.addEventListener('click', () => {
       const module = (btn as HTMLElement).dataset.mcmodule as string;
       const mode = (btn as HTMLElement).dataset.mcmode as 'smart' | 'rules';
+      const company = (btn as HTMLElement).dataset.mccompany as string;
       if (module && mode) {
         if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'smart' };
         // 切换前保存当前文字约束输入
@@ -2172,10 +2280,11 @@ export class ReviewAssistant {
     // 使用默认约束按钮
     document.querySelectorAll('.use-default-rules-btn').forEach(btn => btn.addEventListener('click', () => {
       const module = (btn as HTMLElement).dataset.mcmodule as string;
-      if (module && DEFAULT_COMPANY_RULES[this.companyType]?.[module]) {
+      const company = (btn as HTMLElement).dataset.mccompany as string;
+      if (module && company && DEFAULT_COMPANY_RULES[company]?.[module]) {
         if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'rules' };
         this.moduleConstraints[module].mode = 'rules';
-        this.moduleConstraints[module].rules = DEFAULT_COMPANY_RULES[this.companyType][module];
+        this.moduleConstraints[module].rules = DEFAULT_COMPANY_RULES[company][module];
         this.render();
       }
     }));
@@ -2192,38 +2301,6 @@ export class ReviewAssistant {
     // 帮助提示切换
     document.querySelectorAll('.help-tip').forEach(el => el.addEventListener('click', () => { document.getElementById('modeHelpTip')?.classList.toggle('hidden'); }));
     document.querySelectorAll('.help-tip-type').forEach(el => el.addEventListener('click', () => { document.getElementById('typeHelpTip')?.classList.toggle('hidden'); }));
-
-    // 审核页面 - 模式切换（智能/文字约束）
-    document.querySelectorAll('.mc-mode-btn-review').forEach(btn => btn.addEventListener('click', () => {
-      const mode = (btn as HTMLElement).dataset.mcmode as 'smart' | 'rules';
-      const module = this.reviewType;
-      if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'smart' };
-      this.moduleConstraints[module].mode = mode;
-      if (mode === 'smart') { delete this.moduleConstraints[module].rules; }
-      this.render();
-    }));
-
-    // 审核页面 - 使用默认约束
-    document.querySelectorAll('.use-default-rules-btn-review').forEach(btn => btn.addEventListener('click', () => {
-      const module = this.reviewType;
-      if (module && DEFAULT_COMPANY_RULES[this.companyType]?.[module]) {
-        if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'rules' };
-        this.moduleConstraints[module].mode = 'rules';
-        this.moduleConstraints[module].rules = DEFAULT_COMPANY_RULES[this.companyType][module];
-        this.render();
-      }
-    }));
-
-    // 审核页面 - 文字约束输入保存
-    const rulesInputReview = document.querySelector('.mc-rules-input-review') as HTMLTextAreaElement;
-    if (rulesInputReview) {
-      rulesInputReview.addEventListener('input', () => {
-        const module = this.reviewType;
-        if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'rules' };
-        this.moduleConstraints[module].mode = 'rules';
-        this.moduleConstraints[module].rules = rulesInputReview.value;
-      });
-    }
 
     const startBtn = document.getElementById('startReviewBtn');
     if (startBtn && !startBtn.hasAttribute('disabled')) startBtn.addEventListener('click', () => this.startReview());
@@ -2327,16 +2404,15 @@ export class ReviewAssistant {
       (document.getElementById('knowledgeTitle') as HTMLInputElement).dataset.targetReviewType = target;
     }));
 
-    // 知识库归属选择
-    document.querySelectorAll('.knowledge-company-btn').forEach(btn => btn.addEventListener('click', () => {
-      const ct = (btn as HTMLElement).dataset.kcompany as string;
-      if (ct) {
-        this.knowledgeCompanyType = ct;
+    // 知识库Tab顶级导航切换
+    document.querySelectorAll('.kb-admin-tab').forEach(btn => btn.addEventListener('click', () => {
+      const tab = (btn as HTMLElement).dataset.kbtab as string;
+      if (tab) {
+        this.knowledgeAdminTab = tab;
+        this.knowledgeCompanyType = tab; // 同步更新归属
         // 更新待导入条目的归属
-        if (this.knowledgeEntries.length > 0) this.knowledgeEntries[this.knowledgeEntries.length-1].companyType = ct;
-        // 更新按钮高亮
-        document.querySelectorAll('.knowledge-company-btn').forEach(b => { b.classList.remove('border-blue-500','bg-blue-50','ring-2','ring-blue-200'); b.classList.add('border-gray-200'); });
-        btn.classList.add('border-blue-500','bg-blue-50','ring-2','ring-blue-200'); btn.classList.remove('border-gray-200');
+        if (this.knowledgeEntries.length > 0) this.knowledgeEntries[this.knowledgeEntries.length-1].companyType = tab;
+        this.render();
       }
     }));
 

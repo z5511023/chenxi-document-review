@@ -17,6 +17,11 @@
     --c-border: #e2e8f0;
     --c-border-light: #f1f5f9;
     --radius: 8px;
+    --radius-lg: 12px;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.04);
+    --shadow-md: 0 4px 12px rgba(0,0,0,.06);
+    --transition-fast: 150ms cubic-bezier(.4,0,.2,1);
+    --transition-normal: 250ms cubic-bezier(.4,0,.2,1);
   }
   html { font-family: 'Plus Jakarta Sans', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; -webkit-font-smoothing: antialiased; background: #f8fafc; color: #1e293b; }
   body { min-height: 100vh; }
@@ -27,14 +32,15 @@
 
 @layer components {
   /* Card */
-  .card { background: #fff; border: 1px solid var(--c-border); border-radius: var(--radius); padding: 16px; }
+  .card { background: #fff; border: 1px solid var(--c-border); border-radius: var(--radius); padding: 16px; transition: box-shadow var(--transition-fast); }
+  .card:hover { box-shadow: var(--shadow-sm); }
   .card-static { background: #fff; border: 1px solid var(--c-border); border-radius: var(--radius); }
 
   /* Button */
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-weight: 500; font-size: 13px; border-radius: 6px; padding: 8px 16px; border: none; cursor: pointer; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-weight: 500; font-size: 13px; border-radius: 6px; padding: 8px 16px; border: none; cursor: pointer; transition: all var(--transition-fast); }
   .btn:disabled { opacity: .5; cursor: not-allowed; }
   .btn-primary { background: var(--c-brand); color: #fff; }
-  .btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+  .btn-primary:hover:not(:disabled) { background: #1d4ed8; box-shadow: var(--shadow-sm); }
   .btn-secondary { background: #f1f5f9; color: #334155; }
   .btn-secondary:hover:not(:disabled) { background: #e2e8f0; }
   .btn-danger { background: var(--c-danger); color: #fff; }
@@ -84,8 +90,15 @@
   .history-item:hover { border-color: #e2e8f0; background: #f8fafc; }
 
   /* Company type button */
-  .company-type-btn { cursor: pointer; }
+  .company-type-btn { cursor: pointer; transition: all var(--transition-fast); }
   .company-type-btn.active { font-weight: 600; }
+
+  /* Knowledge admin tab navigation */
+  .kb-admin-tab { transition: all var(--transition-normal); border: none; cursor: pointer; }
+  .kb-admin-tab:hover { transform: translateY(-1px); }
+
+  /* Review constraint card */
+  .mc-rules-zone textarea { transition: border-color var(--transition-fast), box-shadow var(--transition-fast); }
 
   /* Spin */
   @keyframes spin { to { transform: rotate(360deg); } }
