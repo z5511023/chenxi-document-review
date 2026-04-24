@@ -4,21 +4,22 @@
 
 **产品名称**: 辰溪工程文件审核助手
 **所属项目**: 辰溪抽水蓄能电站数字化管控平台
-**版本**: V6.0
+**版本**: V7.0
 **技术栈**: Vite + TypeScript + Tailwind CSS + Express + Supabase + LLM(SSE) + Knowledge + Web Search + pdf.js + JSZip
 
 ## 技术架构
 
 ```
 用户浏览器
-   ↓ 登录（admin/普通用户/游客）
+   ↓ 登录（admin/普通用户/游客）→ 选择所属单位（总包/监理/施工）
    ↓ 上传文件 → 前端解析（pdf.js/JSZip/File.text）→ 提取纯文本（含【第N页】页码标记）
    ↓ JSON POST 纯文本到 /api/review → SSE 流式响应（避免 FaaS 杀后台任务）
 Express 后端 (5000端口)
-   ↓ ① 按审核类型检索对应模块知识库（人员/企业/技术/安全/公文）
-   ↓ ② 知识库不足时 → 联网搜索补全最新法规
-   ↓ ③ 组装模块专用提示词 → 模块标准 + 分类审核(格式/错别字/过期规范/参数不合规/缺失) + 联网资料 + 文件内容
-   ↓ ④ 调用 LLM (doubao-seed-2-0-pro) → 生成审核结果（含 annotatedContent + 分类标注 + 页码定位）
+   ↓ ① 检查文字约束（PROMPT）→ 按审核类型检索知识库
+   ↓ ② 知识库检索：公共知识库（GB/通用法规）→ 单位私有知识库（总包/监理/施工）
+   ↓ ③ 知识库不足时 → 联网搜索补全最新法规（权重低于知识库）
+   ↓ ④ 组装模块专用提示词 → 文字约束 + 模块标准 + 分类审核(格式/错别字/过期规范/参数不合规/缺失) + 知识库资料(公共+单位私有) + 联网资料 + 文件内容
+   ↓ ⑤ 调用 LLM (doubao-seed-2-0-pro) → 生成审核结果（含 annotatedContent + 分类标注 + 页码定位）
    ↓ ⑤ SSE 推送进度事件(started/progress/segment/completed/error)
    ↓ ⑥ 存入 Supabase 数据库 → 审核记录关联用户持久化
    ↓ 返回 SSE completed 事件（含完整审核结果）
@@ -30,7 +31,7 @@ Express 后端 (5000端口)
 | 服务 | 提供方 | 用途 |
 |------|--------|------|
 | 数据库 | Coze Supabase | 审核记录 + 用户账号持久化存储 |
-| 知识库 | Coze Knowledge | 模块化工程法规标准检索（6个独立数据集） |
+| 知识库 | Coze Knowledge | 模块化工程法规标准检索（6个公共数据集 + 15个单位私有数据集） |
 | 联网搜索 | Coze Web Search | 知识库不足时补全最新法规 |
 | AI 审核引擎 | doubao-seed-2-0-pro-260215 | 旗舰级智能文件审核 + 分类标注 + 过期规范检测 |
 
@@ -67,6 +68,7 @@ Express 后端 (5000端口)
 | POST | /api/auth/login | 登录（支持空用户名密码=游客） | 公开 |
 | GET | /api/auth/me | 获取当前用户信息 | 需登录 |
 | PUT | /api/auth/password | 修改密码 | 需登录 |
+| PUT | /api/auth/company-type | 更新所属单位类型 | 需登录 |
 
 ### 用户管理接口（仅admin）
 
@@ -118,6 +120,7 @@ Express 后端 (5000端口)
 | username | varchar(50) UNIQUE | 用户名 |
 | password_hash | text | 密码（明文存储，待升级bcrypt） |
 | role | varchar(20) | 角色：admin/user |
+| company_type | varchar(20) | 所属单位：general/supervisor/construction |
 | display_name | varchar(100) | 显示名称 |
 | created_at | timestamp | 创建时间 |
 | updated_at | timestamp | 更新时间 |
@@ -143,7 +146,8 @@ Express 后端 (5000端口)
 
 | 功能 | admin | 普通用户 | 游客 |
 |------|-------|---------|------|
-| 文件审核 | ✅ | ✅ | ✅ |
+| 文件审核 | ✅ | ✅（按所属单位审核标准） | ✅ |
+| 选择所属单位 | ✅ | ✅ | - |
 | 历史记录 | 查看全部 | 仅自己 | 无 |
 | 知识库管理 | ✅ | 不可见 | 不可见 |
 | 用户管理 | ✅ | 不可见 | 不可见 |
@@ -166,6 +170,19 @@ issues 分类（category 字段）：
 - `missing` - 内容缺失（缺少必要章节、条款、签字等）
 - `other` - 其他问题
 
+## 单位类型与审核标准
+
+| 单位类型 | company_type | 审核标准特点 | 默认文字约束 |
+|----------|-------------|-------------|-------------|
+| 总包单位 | general | EPC整体管理视角，关注设计图纸与施工方案一致性 | 总包单位技术文件审核核心要点 |
+| 监理单位 | supervisor | 质量监督视角，七大维度审核（合规性/安全/质量/技术/管理/危大/应急） | 水利水电工程施工方案监理审核核心重点 |
+| 施工单位 | construction | 施工执行视角，关注工艺适配和安全操作规程 | 施工单位技术文件审核核心要点 |
+
+知识库检索优先级：
+1. 无文字约束：公共知识库 → 单位私有知识库 → 联网搜索
+2. 有文字约束：文字约束(PROMPT) → 公共知识库 → 单位私有知识库 → 联网搜索
+3. 知识库权重始终高于联网搜索，冲突时以知识库为准
+
 ## 知识库内容
 
 已导入以下法规标准：
@@ -173,13 +190,18 @@ issues 分类（category 字段）：
 - 《水利水电工程施工安全管理导则》关键条款
 - 《抽水蓄能电站工程施工安全规范》关键条款
 
-6个独立数据集：
+6个公共数据集（GB文件、通用法规，所有单位共享）：
 - personnel_qualification（人员资质）
 - enterprise_qualification（企业资质）
 - technical_document（技术文件）
 - safety_inspection（安全检查）
 - document_review（公文审核）
 - coze_doc_knowledge（通用法规）
+
+15个单位私有数据集（按单位类型区分）：
+- general_personnel/enterprise/technical/safety/document（总包单位）
+- supervisor_personnel/enterprise/technical/safety/document（监理单位）
+- construction_personnel/enterprise/technical/safety/document（施工单位）
 
 ## 环境变量
 

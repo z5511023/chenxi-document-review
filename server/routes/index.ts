@@ -10,7 +10,8 @@ type AnyClient = any;
 const router = Router();
 
 // ==================== 审核类型 → 知识库数据集映射 ====================
-const DATASET_MAP: Record<string, string[]> = {
+// 公共数据集（GB文件、通用法规，所有单位共享）
+const PUBLIC_DATASETS: Record<string, string[]> = {
   personnel: ['personnel_qualification'],
   enterprise: ['enterprise_qualification'],
   technical: ['technical_document'],
@@ -25,6 +26,46 @@ const DATASET_MAP: Record<string, string[]> = {
     'coze_doc_knowledge',
   ],
 };
+
+// 各单位私有数据集（按 company_type 区分）
+const COMPANY_DATASETS: Record<string, Record<string, string[]>> = {
+  general: { // 总包单位
+    personnel: ['general_personnel'],
+    enterprise: ['general_enterprise'],
+    technical: ['general_technical'],
+    safety: ['general_safety'],
+    document: ['general_document'],
+    comprehensive: ['general_personnel', 'general_enterprise', 'general_technical', 'general_safety', 'general_document'],
+  },
+  supervisor: { // 监理单位
+    personnel: ['supervisor_personnel'],
+    enterprise: ['supervisor_enterprise'],
+    technical: ['supervisor_technical'],
+    safety: ['supervisor_safety'],
+    document: ['supervisor_document'],
+    comprehensive: ['supervisor_personnel', 'supervisor_enterprise', 'supervisor_technical', 'supervisor_safety', 'supervisor_document'],
+  },
+  construction: { // 施工单位
+    personnel: ['construction_personnel'],
+    enterprise: ['construction_enterprise'],
+    technical: ['construction_technical'],
+    safety: ['construction_safety'],
+    document: ['construction_document'],
+    comprehensive: ['construction_personnel', 'construction_enterprise', 'construction_technical', 'construction_safety', 'construction_document'],
+  },
+};
+
+// 旧版兼容映射（无 company_type 时使用）
+const DATASET_MAP: Record<string, string[]> = PUBLIC_DATASETS;
+
+// 获取某单位某审核类型的完整数据集列表（公共 + 单位私有）
+function getDatasetsForCompany(reviewType: string, companyType?: string): string[] {
+  const publicDs = PUBLIC_DATASETS[reviewType] || PUBLIC_DATASETS.comprehensive;
+  if (!companyType || companyType === 'guest') return publicDs;
+  const companyDs = COMPANY_DATASETS[companyType]?.[reviewType] || [];
+  // 去重合并
+  return [...new Set([...publicDs, ...companyDs])];
+}
 
 // ==================== 错别字检测通用指令（附加到所有审核提示词） ====================
 const TYPO_CHECK_INSTRUCTION = `
@@ -552,6 +593,7 @@ interface AuthUser {
   username: string;
   role: 'admin' | 'user' | 'guest';
   displayName: string;
+  companyType?: string; // general=总包单位, supervisor=监理单位, construction=施工单位
 }
 
 function getSessionUser(req: Request): AuthUser | null {
@@ -592,12 +634,14 @@ function requireAdmin(req: Request, res: Response, next: NextFunction): void {
 
 // ==================== 知识库检索 ====================
 async function searchKnowledge(
-  reviewType: string, query: string, headers: Record<string, string>
-): Promise<{ context: string; used: boolean; chunks: number; datasets: string[] }> {
+  reviewType: string, query: string, headers: Record<string, string>, companyType?: string
+): Promise<{ context: string; used: boolean; chunks: number; datasets: string[]; publicChunks: number; companyChunks: number }> {
   try {
     const config = new LLMConfig();
     const knowledgeClient = new KnowledgeClient(config, headers);
-    const datasets = DATASET_MAP[reviewType] || DATASET_MAP.comprehensive;
+
+    // 公共数据集（优先检索）
+    const publicDatasets = PUBLIC_DATASETS[reviewType] || PUBLIC_DATASETS.comprehensive;
 
     const searchQueries: Record<string, string> = {
       personnel: `${query} 人员资质 特种作业证 安全考核证`,
@@ -608,22 +652,58 @@ async function searchKnowledge(
       comprehensive: query,
     };
 
-    const response = await knowledgeClient.search(searchQueries[reviewType] || query, datasets, 5, 0.3);
+    const searchQuery = searchQueries[reviewType] || query;
 
-    if (response.code === 0 && response.chunks && response.chunks.length > 0) {
-      const filtered = response.chunks.filter((chunk: { score: number }) => chunk.score > 0.3);
+    // ① 优先检索公共知识库
+    const publicResponse = await knowledgeClient.search(searchQuery, publicDatasets, 5, 0.3);
+    let publicContext = '';
+    let publicChunks = 0;
+    const usedDatasets: string[] = [...publicDatasets];
+
+    if (publicResponse.code === 0 && publicResponse.chunks && publicResponse.chunks.length > 0) {
+      const filtered = publicResponse.chunks.filter((chunk: { score: number }) => chunk.score > 0.3);
       if (filtered.length > 0) {
-        const context = filtered.map((chunk: { score: number; content: string; document_name?: string }) => {
+        publicChunks = filtered.length;
+        publicContext = filtered.map((chunk: { score: number; content: string; document_name?: string }) => {
           const label = chunk.document_name ? `[数据集: ${chunk.document_name}]` : '';
-          return `[知识库法规片段，相似度: ${(chunk.score * 100).toFixed(0)}%] ${label}\n${chunk.content}`;
+          return `[公共知识库法规片段，相似度: ${(chunk.score * 100).toFixed(0)}%] ${label}\n${chunk.content}`;
         }).join('\n\n');
-        return { context, used: true, chunks: filtered.length, datasets };
       }
     }
-    return { context: '', used: false, chunks: 0, datasets };
+
+    // ② 再检索单位私有知识库
+    let companyContext = '';
+    let companyChunks = 0;
+    if (companyType && COMPANY_DATASETS[companyType]) {
+      const companyDatasets = COMPANY_DATASETS[companyType][reviewType] || [];
+      if (companyDatasets.length > 0) {
+        usedDatasets.push(...companyDatasets);
+        const companyResponse = await knowledgeClient.search(searchQuery, companyDatasets, 3, 0.3);
+        if (companyResponse.code === 0 && companyResponse.chunks && companyResponse.chunks.length > 0) {
+          const filtered = companyResponse.chunks.filter((chunk: { score: number }) => chunk.score > 0.3);
+          if (filtered.length > 0) {
+            companyChunks = filtered.length;
+            const companyNames: Record<string, string> = { general: '总包单位', supervisor: '监理单位', construction: '施工单位' };
+            companyContext = filtered.map((chunk: { score: number; content: string; document_name?: string }) => {
+              const label = chunk.document_name ? `[数据集: ${chunk.document_name}]` : '';
+              return `[${companyNames[companyType] || '单位'}私有知识库片段，相似度: ${(chunk.score * 100).toFixed(0)}%] ${label}\n${chunk.content}`;
+            }).join('\n\n');
+          }
+        }
+      }
+    }
+
+    // 合并：公共知识库在前（权重高），单位私有在后
+    const fullContext = [publicContext, companyContext].filter(Boolean).join('\n\n');
+    const totalChunks = publicChunks + companyChunks;
+
+    if (totalChunks > 0) {
+      return { context: fullContext, used: true, chunks: totalChunks, datasets: usedDatasets, publicChunks, companyChunks };
+    }
+    return { context: '', used: false, chunks: 0, datasets: [], publicChunks: 0, companyChunks: 0 };
   } catch (error) {
     console.error('Knowledge search error:', error);
-    return { context: '', used: false, chunks: 0, datasets: [] };
+    return { context: '', used: false, chunks: 0, datasets: [], publicChunks: 0, companyChunks: 0 };
   }
 }
 
@@ -816,7 +896,7 @@ router.post('/api/auth/login', async (req: Request, res: Response) => {
     const supabase: AnyClient = await getSupabaseClient();
     const { data, error } = await supabase
       .from('users')
-      .select('id, username, password_hash, role, display_name')
+      .select('id, username, password_hash, role, display_name, company_type')
       .eq('username', username)
       .maybeSingle();
 
@@ -836,6 +916,7 @@ router.post('/api/auth/login', async (req: Request, res: Response) => {
       username: data.username as string,
       role: data.role as 'admin' | 'user',
       displayName: (data.display_name || data.username) as string,
+      companyType: (data.company_type as string) || undefined,
     };
     const token = createSessionToken(authUser);
     res.json({ success: true, token, user: authUser });
@@ -848,7 +929,7 @@ router.post('/api/auth/login', async (req: Request, res: Response) => {
 // ==================== 注册 ====================
 router.post('/api/auth/register', async (req: Request, res: Response) => {
   try {
-    const { username, password, displayName } = req.body;
+    const { username, password, displayName, companyType } = req.body;
     if (!username || !password) {
       res.status(400).json({ error: '用户名和密码不能为空' });
       return;
@@ -867,6 +948,9 @@ router.post('/api/auth/register', async (req: Request, res: Response) => {
       return;
     }
 
+    const validCompanyTypes = ['general', 'supervisor', 'construction'];
+    const safeCompanyType = validCompanyTypes.includes(companyType) ? companyType : 'general';
+
     const { data, error } = await supabase
       .from('users')
       .insert({
@@ -874,8 +958,9 @@ router.post('/api/auth/register', async (req: Request, res: Response) => {
         password_hash: password,
         role: 'user',
         display_name: displayName || username,
+        company_type: safeCompanyType,
       })
-      .select('id, username, role, display_name')
+      .select('id, username, role, display_name, company_type')
       .single();
 
     if (error) {
@@ -889,6 +974,7 @@ router.post('/api/auth/register', async (req: Request, res: Response) => {
       username: data.username as string,
       role: 'user',
       displayName: (data.display_name || data.username) as string,
+      companyType: (data.company_type as string) || safeCompanyType,
     };
     const token = createSessionToken(authUser);
     res.json({ success: true, token, user: authUser });
@@ -933,13 +1019,37 @@ router.put('/api/auth/password', requireAuth, async (req: Request, res: Response
   }
 });
 
+// ==================== 用户更新自己的单位类型 ====================
+router.put('/api/auth/company-type', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const authReq = req as Request & { user?: AuthUser };
+    const { companyType } = req.body;
+    const validTypes = ['general', 'supervisor', 'construction'];
+    if (!companyType || !validTypes.includes(companyType)) {
+      res.status(400).json({ error: '无效的单位类型' });
+      return;
+    }
+
+    const supabase: AnyClient = await getSupabaseClient();
+    await supabase.from('users').update({ company_type: companyType, updated_at: new Date().toISOString() }).eq('id', authReq.user!.id);
+
+    // 更新 token 中的 companyType
+    const updatedUser: AuthUser = { ...authReq.user!, companyType };
+    const token = createSessionToken(updatedUser);
+    res.json({ success: true, token, user: updatedUser });
+  } catch (error) {
+    console.error('Update company type error:', error);
+    res.status(500).json({ error: '更新单位类型失败' });
+  }
+});
+
 // ==================== Admin: 获取用户列表 ====================
 router.get('/api/users', requireAdmin, async (_req: Request, res: Response) => {
   try {
     const supabase: AnyClient = await getSupabaseClient();
     const { data, error } = await supabase
       .from('users')
-      .select('id, username, role, display_name, created_at, updated_at')
+      .select('id, username, role, display_name, company_type, created_at, updated_at')
       .order('created_at', { ascending: true });
 
     if (error) {
@@ -956,11 +1066,14 @@ router.get('/api/users', requireAdmin, async (_req: Request, res: Response) => {
 // ==================== Admin: 创建用户 ====================
 router.post('/api/users', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { username, password, role, displayName } = req.body;
+    const { username, password, role, displayName, companyType } = req.body;
     if (!username) {
       res.status(400).json({ error: '用户名不能为空' });
       return;
     }
+
+    const validCompanyTypes = ['general', 'supervisor', 'construction'];
+    const safeCompanyType = validCompanyTypes.includes(companyType) ? companyType : 'general';
 
     const supabase: AnyClient = await getSupabaseClient();
     const { data, error } = await supabase
@@ -970,8 +1083,9 @@ router.post('/api/users', requireAdmin, async (req: Request, res: Response) => {
         password_hash: password || '123456',
         role: role || 'user',
         display_name: displayName || username,
+        company_type: safeCompanyType,
       })
-      .select('id, username, role, display_name, created_at')
+      .select('id, username, role, display_name, company_type, created_at')
       .single();
 
     if (error) {
@@ -992,12 +1106,13 @@ router.post('/api/users', requireAdmin, async (req: Request, res: Response) => {
 // ==================== Admin: 修改用户 ====================
 router.put('/api/users/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { username, password, role, displayName } = req.body;
+    const { username, password, role, displayName, companyType } = req.body;
     const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (username) updateData.username = username;
     if (password) updateData.password_hash = password;
     if (role) updateData.role = role;
     if (displayName !== undefined) updateData.display_name = displayName;
+    if (companyType) updateData.company_type = companyType;
 
     const supabase: AnyClient = await getSupabaseClient();
     const { error } = await supabase.from('users').update(updateData).eq('id', req.params.id);
@@ -1038,7 +1153,7 @@ router.delete('/api/users/:id', requireAdmin, async (req: Request, res: Response
 // ==================== 提交审核（SSE 流式响应） ====================
 			router.post('/api/review', requireAuth, async (req: Request, res: Response) => {
 			  const authReq = req as Request & { user?: AuthUser };
-			  const { fileName, fileContent, reviewType, reviewMode, userRole } = req.body;
+			  const { fileName, fileContent, reviewType, reviewMode, userRole, companyType } = req.body;
 
 			  if (!fileName || !fileContent || !reviewType) {
 			    res.status(400).json({ error: '缺少必要参数' });
@@ -1050,6 +1165,9 @@ router.delete('/api/users/:id', requireAdmin, async (req: Request, res: Response
 			    res.status(400).json({ error: '无效的审核类型' });
 			    return;
 			  }
+
+			  // 单位类型：优先用请求体传入的，否则从用户信息获取
+			  const effectiveCompanyType = companyType || authReq.user?.companyType || 'general';
 
 			  // 设置 SSE 响应头
 			  res.writeHead(200, {
@@ -1097,23 +1215,28 @@ router.delete('/api/users/:id', requireAdmin, async (req: Request, res: Response
 			    const customHeaders = HeaderUtils.extractForwardHeaders(req.headers as unknown as Headers);
 
 			    sendSSE('progress', { stage: 'knowledge', message: '正在检索知识库...' });
-			    const knowledgeResult = await searchKnowledge(reviewType, fileName, customHeaders);
+			    const knowledgeResult = await searchKnowledge(reviewType, fileName, customHeaders, effectiveCompanyType);
 
 			    let webSearchResult = { context: '', used: false, results: 0 };
+			    // 联网搜索条件：公共+单位私有知识库均不足时才联网
 			    if (!knowledgeResult.used || knowledgeResult.chunks < 2) {
-			      sendSSE('progress', { stage: 'websearch', message: '正在联网搜索最新法规...' });
+			      sendSSE('progress', { stage: 'websearch', message: '知识库不足，正在联网搜索最新法规...' });
 			      webSearchResult = await searchWeb(reviewType, fileName, customHeaders);
 			    }
 
 			    let contextSection = '';
 			    if (knowledgeResult.used) {
-			      contextSection += `\n\n=== 知识库检索结果（模块：${knowledgeResult.datasets.join(', ')}） ===\n${knowledgeResult.context}`;
+			      const companyNames: Record<string, string> = { general: '总包单位', supervisor: '监理单位', construction: '施工单位' };
+			      const label = effectiveCompanyType !== 'general' ? `（公共${knowledgeResult.publicChunks}条 + ${companyNames[effectiveCompanyType] || '单位'}私有${knowledgeResult.companyChunks}条）` : `（公共知识库${knowledgeResult.publicChunks}条）`;
+			      contextSection += `\n\n=== 知识库检索结果${label} ===\n${knowledgeResult.context}`;
 			    }
 			    if (webSearchResult.used) {
-			      contextSection += `\n\n=== 联网搜索结果 ===\n${webSearchResult.context}`;
+			      contextSection += `\n\n=== 联网搜索结果（权重低于知识库，仅供参考补充） ===\n${webSearchResult.context}`;
 			    }
 			    if (!knowledgeResult.used && !webSearchResult.used) {
 			      contextSection += '\n\n注意：知识库和联网搜索均未找到直接相关标准，请基于专业知识审核。';
+			    } else if (knowledgeResult.used && webSearchResult.used) {
+			      contextSection += '\n\n【重要 - 审核依据优先级】当知识库内容与联网搜索结果冲突时，以知识库内容为准（知识库权重高于联网搜索）。联网搜索结果仅作为补充参考。';
 			    }
 
 			    let baseSystemPrompt = REVIEW_PROMPTS[reviewType] || REVIEW_PROMPTS.comprehensive;
@@ -1128,29 +1251,12 @@ router.delete('/api/users/:id', requireAdmin, async (req: Request, res: Response
 			    const reqBody = req.body as Record<string, unknown>;
 			    const constraintMode = reqBody.constraintMode as string | undefined;
 			    const constraintContent = reqBody.constraintContent as string | undefined;
-			    if (constraintMode && constraintContent) {
-			      if (constraintMode === 'reference') {
-			        const constraintFileName = (reqBody.constraintFileName as string) || '范文';
-			        const refText = constraintContent.substring(0, 5000);
-			        baseSystemPrompt += `
+			    if (constraintMode === 'rules' && constraintContent) {
+			      baseSystemPrompt += `
 
-【审核依据 - 范文对比】
-请将以下范文作为参考标准，对照检查待审文件与范文的差异，包括但不限于：
-- 内容结构差异（是否缺少章节、条款）
-- 格式规范差异（如标题格式、编号方式）
-- 表述习惯差异（如术语使用、句式结构）
-- 关键技术参数差异
-
-范文名称：${constraintFileName}
-范文内容（前5000字）：
-${refText}`;
-			      } else if (constraintMode === 'rules') {
-			        baseSystemPrompt += `
-
-【审核依据 - 文字约束】
+【审核依据 - 文字约束（PROMPT）】
 请严格按照以下约束条件审核文件，对不符合约束的地方进行标注：
 ${constraintContent}`;
-			      }
 			    }
 			    console.log(`[分段审核] 原文 ${fileContent.length} 字符，跳过报审单/目录 ${skipped.length} 字符，正文 ${body.length} 字符`);
 
@@ -1381,7 +1487,7 @@ router.delete('/api/reviews/:id', requireAuth, async (req: Request, res: Respons
 // ==================== 知识库导入（仅admin） ====================
 router.post('/api/knowledge/import', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { documents, dataset, reviewType, title } = req.body;
+    const { documents, dataset, reviewType, title, companyType } = req.body;
     if (!documents || !Array.isArray(documents) || documents.length === 0) {
       res.status(400).json({ error: '缺少文档数据' });
       return;
@@ -1498,12 +1604,31 @@ router.post('/api/web-search', requireAdmin, async (req: Request, res: Response)
 // ==================== 获取知识库模块列表（仅admin） ====================
 router.get('/api/knowledge/datasets', requireAdmin, (_req: Request, res: Response) => {
   const datasets = [
-    { id: 'personnel_qualification', name: '人员资质', reviewType: 'personnel', icon: '👤', description: '身份证、特种作业证、安全考核证等标准' },
-    { id: 'enterprise_qualification', name: '企业资质', reviewType: 'enterprise', icon: '🏢', description: '营业执照、安全生产许可证等标准' },
-    { id: 'technical_document', name: '技术文件', reviewType: 'technical', icon: '📐', description: '施工方案、技术交底等国家技术标准' },
-    { id: 'safety_inspection', name: '安全检查', reviewType: 'safety', icon: '🔒', description: '安全检查表、风险评估等标准' },
-    { id: 'document_review', name: '公文审核', reviewType: 'document', icon: '📄', description: '公文格式规范（字体、边距、签章等）' },
-    { id: 'coze_doc_knowledge', name: '通用法规', reviewType: 'comprehensive', icon: '📚', description: '建设工程安全生产管理条例等通用法规' },
+    // 公共数据集
+    { id: 'personnel_qualification', name: '人员资质（公共）', reviewType: 'personnel', companyType: 'public', icon: '👤', description: '身份证、特种作业证、安全考核证等标准（GB文件等）' },
+    { id: 'enterprise_qualification', name: '企业资质（公共）', reviewType: 'enterprise', companyType: 'public', icon: '🏢', description: '营业执照、安全生产许可证等标准' },
+    { id: 'technical_document', name: '技术文件（公共）', reviewType: 'technical', companyType: 'public', icon: '📐', description: '施工方案、技术交底等国家技术标准' },
+    { id: 'safety_inspection', name: '安全检查（公共）', reviewType: 'safety', companyType: 'public', icon: '🔒', description: '安全检查表、风险评估等标准' },
+    { id: 'document_review', name: '公文审核（公共）', reviewType: 'document', companyType: 'public', icon: '📄', description: '公文格式规范（字体、边距、签章等）' },
+    { id: 'coze_doc_knowledge', name: '通用法规（公共）', reviewType: 'comprehensive', companyType: 'public', icon: '📚', description: '建设工程安全生产管理条例等通用法规' },
+    // 总包单位私有数据集
+    { id: 'general_personnel', name: '人员资质（总包）', reviewType: 'personnel', companyType: 'general', icon: '👤', description: '总包单位人员资质审核标准' },
+    { id: 'general_enterprise', name: '企业资质（总包）', reviewType: 'enterprise', companyType: 'general', icon: '🏢', description: '总包单位企业资质审核标准' },
+    { id: 'general_technical', name: '技术文件（总包）', reviewType: 'technical', companyType: 'general', icon: '📐', description: '总包单位技术文件审核标准' },
+    { id: 'general_safety', name: '安全检查（总包）', reviewType: 'safety', companyType: 'general', icon: '🔒', description: '总包单位安全检查审核标准' },
+    { id: 'general_document', name: '公文审核（总包）', reviewType: 'document', companyType: 'general', icon: '📄', description: '总包单位公文审核标准' },
+    // 监理单位私有数据集
+    { id: 'supervisor_personnel', name: '人员资质（监理）', reviewType: 'personnel', companyType: 'supervisor', icon: '👤', description: '监理单位人员资质审核标准' },
+    { id: 'supervisor_enterprise', name: '企业资质（监理）', reviewType: 'enterprise', companyType: 'supervisor', icon: '🏢', description: '监理单位企业资质审核标准' },
+    { id: 'supervisor_technical', name: '技术文件（监理）', reviewType: 'technical', companyType: 'supervisor', icon: '📐', description: '监理单位技术文件审核标准' },
+    { id: 'supervisor_safety', name: '安全检查（监理）', reviewType: 'safety', companyType: 'supervisor', icon: '🔒', description: '监理单位安全检查审核标准' },
+    { id: 'supervisor_document', name: '公文审核（监理）', reviewType: 'document', companyType: 'supervisor', icon: '📄', description: '监理单位公文审核标准' },
+    // 施工单位私有数据集
+    { id: 'construction_personnel', name: '人员资质（施工）', reviewType: 'personnel', companyType: 'construction', icon: '👤', description: '施工单位人员资质审核标准' },
+    { id: 'construction_enterprise', name: '企业资质（施工）', reviewType: 'enterprise', companyType: 'construction', icon: '🏢', description: '施工单位企业资质审核标准' },
+    { id: 'construction_technical', name: '技术文件（施工）', reviewType: 'technical', companyType: 'construction', icon: '📐', description: '施工单位技术文件审核标准' },
+    { id: 'construction_safety', name: '安全检查（施工）', reviewType: 'safety', companyType: 'construction', icon: '🔒', description: '施工单位安全检查审核标准' },
+    { id: 'construction_document', name: '公文审核（施工）', reviewType: 'document', companyType: 'construction', icon: '📄', description: '施工单位公文审核标准' },
   ];
   res.json({ success: true, datasets });
 });

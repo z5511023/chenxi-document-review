@@ -17,11 +17,13 @@ export const knowledgeFiles = pgTable(
     doc_id: text("doc_id"),
     content_preview: text("content_preview"),
     source_type: text("source_type").default("text"),
+    company_type: varchar("company_type", { length: 20 }).default("public"),
     created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updated_at: timestamp("updated_at", { withTimezone: true }).defaultNow(),
   },
   (table) => [
     index("knowledge_files_dataset_idx").on(table.dataset),
+    index("knowledge_files_company_type_idx").on(table.company_type),
   ]
 );
 
@@ -34,6 +36,7 @@ export const reviewRecords = pgTable(
     review_type: varchar("review_type", { length: 20 }).notNull(),
     review_mode: varchar("review_mode", { length: 20 }).notNull(),
     user_role: varchar("user_role", { length: 20 }).notNull().default("general"),
+    company_type: varchar("company_type", { length: 20 }).default("general"),
     status: varchar("status", { length: 20 }).notNull().default("pending"),
     result: jsonb("result"),
     created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -43,5 +46,6 @@ export const reviewRecords = pgTable(
     index("review_records_status_idx").on(table.status),
     index("review_records_review_type_idx").on(table.review_type),
     index("review_records_created_at_idx").on(table.created_at),
+    index("review_records_company_type_idx").on(table.company_type),
   ]
 );

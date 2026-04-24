@@ -10,13 +10,13 @@ export interface ReviewResult {
 }
 export interface Issue { level: 'high' | 'medium' | 'low'; title: string; description: string; suggestion: string; location?: string; category?: 'format' | 'typo' | 'outdated_standard' | 'non_compliant' | 'missing' | 'other' }
 export interface Reference { source: 'knowledge' | 'web'; title: string; snippet: string }
-export type Role = 'general' | 'supervisor';
+export type Role = 'general' | 'supervisor' | 'construction';
 export type ReviewType = 'personnel' | 'enterprise' | 'technical' | 'safety' | 'document' | 'comprehensive';
 export type ReviewMode = 'quick' | 'detailed';
 export type TabView = 'review' | 'knowledge' | 'admin';
-export interface KnowledgeEntry { id: string; title: string; type: 'text' | 'url'; content?: string; url?: string; targetDataset: string; targetReviewType: ReviewType; createdAt: string }
-export interface AuthUser { id: string; username: string; role: 'admin' | 'user' | 'guest'; displayName: string }
-export interface ManagedUser { id: string; username: string; role: string; display_name: string; created_at: string }
+export interface KnowledgeEntry { id: string; title: string; type: 'text' | 'url'; content?: string; url?: string; targetDataset: string; targetReviewType: ReviewType; companyType: string; createdAt: string }
+export interface AuthUser { id: string; username: string; role: 'admin' | 'user' | 'guest'; displayName: string; companyType?: string }
+export interface ManagedUser { id: string; username: string; role: string; display_name: string; company_type?: string; created_at: string }
 
 // ✅ pdf.js worker 引入方案：
 // 不用 Vite ?url import（在 Vite middleware 模式下对 .mjs 不稳定）
@@ -36,15 +36,93 @@ export const REVIEW_MODES: Record<ReviewMode, { label: string; icon: string; des
   quick:    { label: '快速审核', icon: '⚡', desc: '5分钟内完成' },
   detailed: { label: '详细审核', icon: '📋', desc: '全面深入审核' },
 };
-export const ROLES: Record<Role, { label: string; unit: string; desc: string }> = {
-  general:    { label: '总包单位', unit: '中南院辰溪项目部', desc: '负责 EPC 整体管理' },
-  supervisor: { label: '监理单位', unit: '辰溪监理项目部', desc: '负责工程质量监督' },
+export const COMPANY_TYPES: Record<string, { label: string; icon: string; desc: string; color: string }> = {
+  general:      { label: '总包单位', icon: '🏗️', desc: '负责 EPC 整体管理', color: '#1e40af' },
+  supervisor:   { label: '监理单位', icon: '🔍', desc: '负责工程质量监督', color: '#7c3aed' },
+  construction: { label: '施工单位', icon: '⚒️', desc: '负责工程施工执行', color: '#b45309' },
 };
+
+export const DEFAULT_COMPANY_RULES: Record<string, Record<string, string>> = {
+  supervisor: {
+    technical: `水利水电工程施工方案监理审核核心重点
+结合水利行业规范、抽蓄/水工建筑物施工特点及监理管控要求，从合规性、安全、质量、技术、管理、危大工程、应急七大维度，梳理监理审核关键要点，适配厂房、引水隧洞、管道、土石方、混凝土、围堰等各类水工专项方案。
+
+一、方案合规性与编制基础审核
+编制依据：核查是否引用现行有效规范、规程（SL、DL、GB水利水电标准）、设计图纸、地质勘察报告、施工合同、监理规划及细则；严禁使用废止规范。
+编制审批流程：施工单位技术负责人审批签字、盖章齐全；分包单位施工方案需总包统一审批，超过一定规模专项方案需专家论证手续完整。
+内容完整性：工程概况、施工部署、工艺流程、资源配置、进度计划、质量安全措施、验收要求、附图附表齐全，无缺项漏项。
+
+二、施工技术方案合理性审核
+工艺选型：施工工艺、施工方法适配水工地质条件（围岩、软基、岩溶、地下水）、建筑物结构特点，与设计要求一致；特殊工艺（压力管道焊接、隧洞衬砌、防渗施工）工艺成熟、可落地。
+图纸与参数匹配：断面尺寸、坡度、防渗等级、混凝土标号、钢筋保护层、焊接标准、试验参数等严格对应设计图纸及技术通知单。
+季节性与工况适配：汛期、雨季、冬季、高温施工专项措施完善，水利工程重点考虑水流影响、汛期防洪、地下水排水、抗渗抗冻特殊要求。
+交叉施工协调：土建、机电、金结、管线交叉施工顺序合理，避免工序冲突，满足水工建筑物沉降、防渗、结构受力时序要求。
+
+三、工程质量管控措施审核
+质量目标与验收标准：明确单元工程、分部工程质量目标，严格执行水利单元工程质量评定标准，验收划分合理。
+关键工序管控：水工核心工序（基础处理、防渗止水、大体积混凝土温控、金属结构焊接、压力管道安装、回填灌浆/固结灌浆、土石方边坡支护等），设置旁站、平行检验、见证取样控制点。
+原材料与试验检测：原材料（钢筋、水泥、砂石、防水材料、管材）进场验收、复检方案；试块、焊缝探伤、水压试验、防渗检测等试验计划合理，检测频次、标准符合规范。
+质量通病预防：水工渗漏、裂缝、边坡坍塌、混凝土蜂窝麻面、管道焊缝缺陷等质量通病防控措施具体。
+
+四、安全生产与文明施工审核（水利重中之重）
+危险源辨识：针对深基坑、高边坡、隧洞开挖、围堰导流、水上/水下作业、临建设施、临时用电、大型机械等水利重大危险源辨识全面。
+安全专项措施：高处作业、有限空间、爆破作业、临时围堰防洪度汛、排水导流、水上作业救生、临边防护等专项措施针对性强。
+临时工程安全：施工围堰、临时排水系统、施工便道、脚手架、模板支撑体系验算完整，承载力、稳定性计算资料齐全。
+临时用电与机械管理：严格执行三级配电两级保护，特种设备验收、操作人员持证上岗、设备检修维护方案完善。
+
+五、危大工程专项管控审核
+危大工程界定准确：高边坡开挖、深基坑、隧洞暗挖、大体积混凝土、大型模板支撑、压力管道重型安装、围堰拆除等依规界定。
+专项方案及论证：危大工程单独编制专项方案，超规模危大工程专家论证意见落实，方案按论证意见修改完善。
+过程监测措施：边坡位移、围岩收敛、基坑沉降、围堰变形等监测方案、预警值、监测频次明确。
+
+六、进度、资源与现场管理审核
+施工进度计划：总工期、节点工期满足合同要求，关键线路清晰，汛期、停水停电等干扰因素有工期调整预案。
+人材机资源配置：管理人员、特种作业人员持证齐全；机械设备、周转材料、劳动力配置满足施工强度要求。
+现场管理与环保水保：符合水利工程水土保持、生态环保要求，弃渣堆放、污水排放、扬尘控制、河道保护措施合规。
+
+七、应急预案与度汛管理（水利独有核心要点）
+防洪度汛方案：明确汛期施工安排、水位监测、防洪物资、人员撤离路线，围堰防洪标准满足设计及地方防汛要求。
+应急处置预案：针对坍塌、透水、洪水漫堰、有限空间中毒、火灾、机械伤害等突发事件，应急组织机构、物资、救援流程完善。
+雨季、地下水处置：基坑排水、隧洞抽排水、地表截排水系统布置合理，防止积水浸泡基础、破坏防渗结构。`,
+    safety: `水利水电工程安全检查监理审核核心要点
+依据《水利水电工程施工安全管理导则》及行业规范，重点审核：
+- 危险源辨识与风险评估完整性
+- 安全专项施工方案编制与审批合规性
+- 危大工程界定、方案论证与过程监测
+- 施工围堰、临时用电、高处作业等专项安全措施
+- 特种作业人员持证与设备验收情况
+- 应急预案与防洪度汛方案完备性`,
+  },
+  general: {
+    technical: `总包单位技术文件审核核心要点
+作为EPC总承包方，重点审核：
+- 设计图纸与施工方案的一致性
+- 施工组织设计全面性与可执行性
+- 分包单位方案审批与管控措施
+- 施工进度计划与资源配置合理性
+- 质量保证体系与验收标准合规性
+- 安全生产管理体系的健全性
+- 环保水保措施与地方要求符合性`,
+  },
+  construction: {
+    technical: `施工单位技术文件审核核心要点
+作为施工执行方，重点审核：
+- 施工方案与设计要求、施工合同的符合性
+- 施工工艺与作业条件的适配性
+- 质量控制措施与检验标准完整性
+- 安全技术措施与操作规程完备性
+- 人员资质与机械设备配置合理性
+- 施工进度与资源配置的可行性
+- 文明施工与环保措施落实情况`,
+  },
+};
+
 
 export class ReviewAssistant {
   private currentUser: AuthUser | null = null;
   private token: string | null = null;
   private role: Role = 'general';
+  private companyType: string = 'general';
   private files: FileItem[] = [];
   private reviewType: ReviewType = 'comprehensive';
   private reviewMode: ReviewMode = 'quick';
@@ -54,10 +132,11 @@ export class ReviewAssistant {
   private container!: HTMLElement;
   private activeTab: TabView = 'review';
   private knowledgeEntries: KnowledgeEntry[] = [];
+  private knowledgeCompanyType: string = 'public';
   private knowledgeFileContent: string = '';
   private knowledgeFileName: string = '';
   // 审核依据：按模块绑定，管理员在知识库中配置
-  private moduleConstraints: Record<string, { mode: 'smart' | 'none' | 'reference' | 'rules'; fileContent?: string; fileName?: string; rules?: string }> = {};
+  private moduleConstraints: Record<string, { mode: 'smart' | 'none' | 'rules'; fileContent?: string; fileName?: string; rules?: string }> = {};
   // 知识库文件列表
   private knowledgeFiles: Array<{ id: string; title: string; dataset: string; doc_id: string; content_preview: string; source_type: string; created_at: string }> = [];
   private isImporting = false;
@@ -125,7 +204,7 @@ export class ReviewAssistant {
     const savedToken = localStorage.getItem('auth_token');
     const savedUser = localStorage.getItem('auth_user');
     if (savedToken && savedUser) {
-      try { this.token = savedToken; this.currentUser = JSON.parse(savedUser); } catch { localStorage.removeItem('auth_token'); localStorage.removeItem('auth_user'); }
+      try { this.token = savedToken; this.currentUser = JSON.parse(savedUser); if (this.currentUser?.companyType) this.companyType = this.currentUser.companyType; } catch { localStorage.removeItem('auth_token'); localStorage.removeItem('auth_user'); }
     }
     this.render();
     if (this.isLoggedIn()) { this.loadHistoryFromDB(); }
@@ -148,6 +227,7 @@ export class ReviewAssistant {
       const data = await response.json();
       if (data.success) {
         this.currentUser = data.user; this.token = data.token;
+        if (data.user.companyType) this.companyType = data.user.companyType;
         localStorage.setItem('auth_token', data.token);
         localStorage.setItem('auth_user', JSON.stringify(data.user));
         this.loadHistoryFromDB();
@@ -160,17 +240,36 @@ export class ReviewAssistant {
     try {
       const response = await fetch('/api/auth/register', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, displayName }),
+        body: JSON.stringify({ username, password, displayName, companyType: this.companyType }),
       });
       const data = await response.json();
       if (data.success) {
         this.currentUser = data.user; this.token = data.token;
+        if (data.user.companyType) this.companyType = data.user.companyType;
         localStorage.setItem('auth_token', data.token);
         localStorage.setItem('auth_user', JSON.stringify(data.user));
         this.showRegister = false;
         this.loadHistoryFromDB();
         this.render();
       } else { alert(data.error || '注册失败'); }
+    } catch { alert('网络异常，请重试'); }
+  }
+
+  async updateCompanyType(companyType: string) {
+    try {
+      const response = await fetch('/api/auth/company-type', {
+        method: 'PUT', headers: this.authHeaders(),
+        body: JSON.stringify({ companyType }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        this.companyType = companyType;
+        this.currentUser = data.user; this.token = data.token;
+        localStorage.setItem('auth_token', data.token);
+        localStorage.setItem('auth_user', JSON.stringify(data.user));
+        this.showToast(`已切换为${COMPANY_TYPES[companyType]?.label || companyType}`, 'success');
+        this.render();
+      } else { alert(data.error || '更新失败'); }
     } catch { alert('网络异常，请重试'); }
   }
 
@@ -537,11 +636,7 @@ export class ReviewAssistant {
               reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role,
             };
             const mc = this.moduleConstraints[this.reviewType];
-            if (mc && mc.mode === 'reference' && mc.fileContent) {
-              reviewBody.constraintMode = 'reference';
-              reviewBody.constraintContent = mc.fileContent;
-              reviewBody.constraintFileName = mc.fileName || '范文';
-            } else if (mc && mc.mode === 'rules' && mc.rules?.trim()) {
+            if (mc && mc.mode === 'rules' && mc.rules?.trim()) {
               reviewBody.constraintMode = 'rules';
               reviewBody.constraintContent = mc.rules.trim();
             }
@@ -591,11 +686,7 @@ export class ReviewAssistant {
           fileName, fileContent: combinedContent, reviewType: this.reviewType, reviewMode: this.reviewMode, userRole: this.role,
         };
         const mc = this.moduleConstraints[this.reviewType];
-        if (mc && mc.mode === 'reference' && mc.fileContent) {
-          reviewBody.constraintMode = 'reference';
-          reviewBody.constraintContent = mc.fileContent;
-          reviewBody.constraintFileName = mc.fileName || '范文';
-        } else if (mc && mc.mode === 'rules' && mc.rules?.trim()) {
+        if (mc && mc.mode === 'rules' && mc.rules?.trim()) {
           reviewBody.constraintMode = 'rules';
           reviewBody.constraintContent = mc.rules.trim();
         }
@@ -797,7 +888,7 @@ export class ReviewAssistant {
     }
   }
 
-  /** 处理审核依据文件上传（范文对比模式，按模块绑定） */
+  /** 处理审核依据文件上传（按模块绑定） */
   async handleConstraintFile(file: File, module: string) {
     try {
       let text = '';
@@ -822,8 +913,8 @@ export class ReviewAssistant {
         text = await file.text();
       }
       if (!text) { alert('文件内容为空或无法解析'); return; }
-      if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'reference' };
-      this.moduleConstraints[module].mode = 'reference';
+      if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'smart' };
+      this.moduleConstraints[module].mode = 'smart';
       this.moduleConstraints[module].fileContent = text.substring(0, 50000);
       this.moduleConstraints[module].fileName = file.name;
       this.showToast(`范文已加载: ${file.name} → ${REVIEW_TYPES[module as ReviewType]?.label || module}`, 'success');
@@ -988,6 +1079,7 @@ export class ReviewAssistant {
   private renderHeader(): string {
     const showKnowledge = this.isAdmin();
     const showAdmin = this.isAdmin();
+    const currentCompany = COMPANY_TYPES[this.companyType];
     return `
       <header class="bg-white border-b sticky top-0 z-50" style="border-color:var(--c-border)">
         <div class="max-w-7xl mx-auto px-5 h-14 flex items-center justify-between">
@@ -1007,10 +1099,14 @@ export class ReviewAssistant {
             <div class="flex bg-slate-100 rounded-lg p-0.5 gap-0.5">
               <button class="role-btn tab-btn ${this.role==='general'?'active':''}" data-role="general">总包</button>
               <button class="role-btn tab-btn ${this.role==='supervisor'?'active':''}" data-role="supervisor">监理</button>
+              <button class="role-btn tab-btn ${this.role==='construction'?'active':''}" data-role="construction">施工</button>
             </div>
             <div class="flex items-center gap-2 pl-3 border-l" style="border-color:var(--c-border)">
-              <div class="w-7 h-7 ${this.isAdmin()?'bg-slate-800':'bg-blue-600'} rounded-full flex items-center justify-center text-white text-xs font-semibold">${this.currentUser?.displayName?.charAt(0) || '?'}</div>
-              <div class="text-xs text-slate-600 font-medium">${this.currentUser?.displayName || ''}</div>
+              <div class="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-semibold" style="background:${currentCompany?.color || 'var(--c-brand)'}">${this.currentUser?.displayName?.charAt(0) || '?'}</div>
+              <div class="text-xs">
+                <div class="text-slate-600 font-medium">${this.currentUser?.displayName || ''}</div>
+                <div class="text-slate-400 leading-tight">${currentCompany?.label || '未选择单位'}</div>
+              </div>
               <button id="logoutBtn" class="btn btn-ghost btn-sm">退出</button>
             </div>
           </div>
@@ -1021,10 +1117,16 @@ export class ReviewAssistant {
 
   // ==================== 审核 Tab ====================
   private renderReviewTab(): string {
+    const companyBanner = this.currentUser && this.currentUser.role !== 'guest' && this.currentUser.role !== 'admin' && !this.currentUser.companyType ? `
+      <div class="p-3 rounded-lg border border-amber-200 bg-amber-50 flex items-center gap-3 mb-2">
+        <span class="text-lg">⚠️</span>
+        <div class="flex-1"><div class="text-sm font-medium text-amber-800">请选择您所属的单位</div><div class="text-xs text-amber-600">不同单位使用不同的审核标准和知识库，请在下方选择</div></div>
+      </div>
+    ` : '';
     return `
       <div class="grid-layout">
         <div class="space-y-4">
-          ${this.renderUploadArea()} ${this.renderReviewSettings()} ${this.renderHistory()}
+          ${companyBanner}${this.renderUploadArea()} ${this.renderReviewSettings()} ${this.renderHistory()}
         </div>
         <div class="card-static min-h-[600px]">
           ${this.previewContent ? this.renderPreview() : (this.currentReview || this.batchResults.length > 1) ? this.renderResult() : this.renderEmptyState()}
@@ -1780,7 +1882,7 @@ export class ReviewAssistant {
             ${this.knowledgeEntries.length>0?`
               <div class="card">
                 <div class="flex items-center justify-between mb-3"><h3 class="text-sm font-semibold text-slate-900">待导入 ${this.knowledgeEntries.length} 条</h3></div>
-                <div class="space-y-1.5 mb-3 max-h-40 overflow-y-auto">${this.knowledgeEntries.map(e=>{const tc=REVIEW_TYPES[e.targetReviewType];return `<div class="flex items-center gap-1.5 p-1.5 bg-gray-50 rounded"><span class="text-xs">${tc?.icon||'📝'}</span><div class="flex-1 min-w-0"><div class="text-xs font-medium text-gray-900 truncate">${e.title}</div><div class="text-xs text-blue-600">${tc?.datasetName||''}</div></div><button class="remove-knowledge text-xs text-gray-400 hover:text-red-500" data-kremove="${e.id}">✕</button></div>`;}).join('')}</div>
+                <div class="space-y-1.5 mb-3 max-h-40 overflow-y-auto">${this.knowledgeEntries.map(e=>{const tc=REVIEW_TYPES[e.targetReviewType];const ct=COMPANY_TYPES[e.companyType];const ctLabel=e.companyType==='public'?'📚公共':ct?`${ct.icon}${ct.label}`:'📚公共';return `<div class="flex items-center gap-1.5 p-1.5 bg-gray-50 rounded"><span class="text-xs">${tc?.icon||'📝'}</span><div class="flex-1 min-w-0"><div class="text-xs font-medium text-gray-900 truncate">${e.title}</div><div class="flex items-center gap-1"><span class="text-xs text-blue-600">${tc?.datasetName||''}</span><span class="text-[10px] px-1 py-0.5 rounded bg-slate-200 text-slate-600">${ctLabel}</span></div></div><button class="remove-knowledge text-xs text-gray-400 hover:text-red-500" data-kremove="${e.id}">✕</button></div>`;}).join('')}</div>
                 <button id="importKnowledgeBtn" class="btn btn-primary w-full">按模块分类导入</button>
               </div>
             `:''}
@@ -1801,26 +1903,24 @@ export class ReviewAssistant {
           <div class="space-y-5">
             <div class="card">
               <div class="flex items-center gap-2 mb-3"><span class="text-sm">🎯</span><h3 class="text-sm font-semibold text-gray-900">审核依据配置</h3><span class="text-xs text-gray-400">— 按模块设定审核约束</span></div>
-              <p class="text-xs text-gray-500 mb-3">为每个模块配置审核方式：<b>智能</b>自动检索知识库+联网搜索；<b>范文对比</b>从左侧上传范文到对应模块知识库，审核时自动检索对照；<b>文字约束</b>自定义规则检查格式合规性。</p>
+              <p class="text-xs text-gray-500 mb-3">为每个模块配置审核方式：<b>智能</b>自动检索知识库，不足时联网搜索；<b>文字约束</b>即PROMPT，优先检查约束内容，再检索知识库，最后联网搜索。</p>
               <div class="space-y-3">
                 ${Object.entries(REVIEW_TYPES).filter(([k])=>k!=='comprehensive').map(([key,config])=>{
                   const mc = this.moduleConstraints[key] || { mode: 'none' as const };
                   return `
                   <div class="border rounded-lg p-2.5">
                     <div class="flex items-center gap-1.5 mb-2"><span>${config.icon}</span><span class="text-xs font-medium">${config.label}</span>
-                      ${mc.mode !== 'none' && mc.mode !== 'smart' ? `<span class="text-xs px-1.5 py-0.5 rounded ${mc.mode==='reference'?'bg-purple-50 text-purple-600':'bg-amber-50 text-amber-600'}">${mc.mode==='reference'?'范文对比':'文字约束'}</span>` : `<span class="text-xs text-green-600">🧠 智能检索</span>`}
+                      ${mc.mode === 'rules' ? `<span class="text-xs px-1.5 py-0.5 rounded bg-amber-50 text-amber-600">📝 文字约束</span>` : `<span class="text-xs text-green-600">🧠 智能检索</span>`}
                     </div>
                     <div class="flex gap-1 mb-1.5">
                       <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='smart'||mc.mode==='none'?'border-green-400 bg-green-50 text-green-700':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="smart">🧠 智能</button>
-                      <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='reference'?'border-purple-400 bg-purple-50 text-purple-600':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="reference">📄 范文对比</button>
+                      
                       <button class="mc-mode-btn px-2 py-1 rounded text-xs border transition-all ${mc.mode==='rules'?'border-amber-400 bg-amber-50 text-amber-600':'border-gray-200 text-gray-400 hover:border-gray-300'}" data-mcmodule="${key}" data-mcmode="rules">📝 文字约束</button>
                     </div>
                     ${mc.mode==='smart'?`
                       <div class="text-xs text-green-600 bg-green-50 rounded p-1.5 flex items-center gap-1.5"><span>🧠</span><span>自动检索知识库，知识库不足时联网搜索补全</span></div>
                     `:''}
-                    ${mc.mode==='reference'?`
-                      <div class="text-xs text-purple-600 bg-purple-50 rounded p-1.5 flex items-center gap-1.5"><span>📄</span><span>请从左侧上传范文到「${config.label}」模块知识库，审核时自动检索对照</span></div>
-                    `:''}
+                    
                     ${mc.mode==='rules'?`
                       <div class="mc-rules-zone" data-mcmodule="${key}">
                         <textarea class="w-full border border-amber-200 rounded-lg p-1.5 text-xs text-gray-700 resize-none focus:ring-1 focus:ring-amber-300 focus:border-amber-400 mc-rules-input" data-mcmodule="${key}" rows="2" placeholder="输入约束条件，如：&#10;- 正文仿宋GB2312三号字&#10;- 页边距上下2.54cm">${mc.rules||''}</textarea>
@@ -1909,7 +2009,10 @@ export class ReviewAssistant {
 
   private renderLoadingOverlay(): string {
     const tc = REVIEW_TYPES[this.reviewType];
-    return `<div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50"><div class="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center shadow-xl"><div class="w-12 h-12 border-4 rounded-full animate-spin mx-auto mb-4" style="border-color:#dbeafe;border-top-color:var(--c-brand)"></div><h3 class="font-semibold text-slate-900 mb-2">AI 智能审核中</h3><p id="loadingStatusText" class="text-sm font-medium mb-3" style="color:var(--c-brand)">正在准备审核...</p><div class="space-y-1 text-sm text-slate-500 mb-4"><div>解析文件内容</div><div>检索「${tc?.datasetName||'知识库'}」</div><div>检测错别字</div><div>AI 分段对比标注</div></div><p class="text-xs text-slate-400 mb-2">长文档将自动分段审核，全文无遗漏</p><div class="w-full rounded-full h-1.5 bg-slate-100"><div class="h-1.5 rounded-full animate-pulse" style="width:60%;background:var(--c-brand)"></div></div></div></div>`;
+    const ct = COMPANY_TYPES[this.companyType];
+    const mc = this.moduleConstraints[this.reviewType];
+    const hasRules = mc?.mode === 'rules' && mc.rules?.trim();
+    return `<div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50"><div class="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center shadow-xl"><div class="w-12 h-12 border-4 rounded-full animate-spin mx-auto mb-4" style="border-color:#dbeafe;border-top-color:var(--c-brand)"></div><h3 class="font-semibold text-slate-900 mb-2">AI 智能审核中</h3><p id="loadingStatusText" class="text-sm font-medium mb-3" style="color:var(--c-brand)">正在准备审核...</p><div class="space-y-1 text-sm text-slate-500 mb-4">${hasRules?'<div>检查文字约束</div>':''}<div>检索公共知识库「${tc?.datasetName||'知识库'}」</div>${ct?`<div>检索${ct.label}私有知识库</div>`:''}<div>联网搜索补全（如需）</div><div>AI 分段对比标注</div></div><p class="text-xs text-slate-400 mb-2">长文档将自动分段审核，全文无遗漏</p><div class="w-full rounded-full h-1.5 bg-slate-100"><div class="h-1.5 rounded-full animate-pulse" style="width:60%;background:var(--c-brand)"></div></div></div></div>`;
   }
 
   private renderPreviewLoadingOverlay(): string {
@@ -1942,13 +2045,16 @@ export class ReviewAssistant {
       const p = (document.getElementById('regPassword') as HTMLInputElement)?.value;
       const pc = (document.getElementById('regPasswordConfirm') as HTMLInputElement)?.value;
       const dn = (document.getElementById('regDisplayName') as HTMLInputElement)?.value.trim();
+      const ct = (document.getElementById('regCompanyType') as HTMLSelectElement)?.value;
       if (!u) { alert('请输入用户名'); return; }
       if (!p) { alert('请输入密码'); return; }
       if (p !== pc) { alert('两次输入的密码不一致'); return; }
+      if (!ct) { alert('请选择所属单位'); return; }
+      this.companyType = ct;
       this.register(u, p, dn);
     });
     // 注册页回车
-    ['regUsername','regPassword','regPasswordConfirm','regDisplayName'].forEach(id => {
+    ['regUsername','regPassword','regPasswordConfirm','regDisplayName','regCompanyType'].forEach(id => {
       document.getElementById(id)?.addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter') { (document.getElementById('registerBtn') as HTMLElement)?.click(); } });
     });
 
@@ -1958,6 +2064,7 @@ export class ReviewAssistant {
     // Tab
     document.querySelectorAll('.main-tab-btn').forEach(btn => btn.addEventListener('click', e => { const tab = (e.currentTarget as HTMLElement).dataset.tab as TabView; if (tab) this.setActiveTab(tab); }));
     document.querySelectorAll('.role-btn').forEach(btn => btn.addEventListener('click', e => { const role = (e.currentTarget as HTMLElement).dataset.role as Role; if (role) this.setRole(role); }));
+    document.querySelectorAll('.company-type-btn').forEach(btn => btn.addEventListener('click', e => { const ct = (e.currentTarget as HTMLElement).dataset.company as string; if (ct) this.updateCompanyType(ct); }));
 
     // 上传
     const uploadArea = document.getElementById('uploadArea');
@@ -1986,7 +2093,7 @@ export class ReviewAssistant {
     // 审核依据模式切换（按模块）
     document.querySelectorAll('.mc-mode-btn').forEach(btn => btn.addEventListener('click', () => {
       const module = (btn as HTMLElement).dataset.mcmodule as string;
-      const mode = (btn as HTMLElement).dataset.mcmode as 'smart' | 'reference' | 'rules';
+      const mode = (btn as HTMLElement).dataset.mcmode as 'smart' | 'rules';
       if (module && mode) {
         if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'smart' };
         // 切换前保存当前文字约束输入
@@ -1995,6 +2102,23 @@ export class ReviewAssistant {
           this.moduleConstraints[module].rules = rulesInput.value;
         }
         this.moduleConstraints[module].mode = mode;
+        // 切换模式时清理旧数据
+        if (mode === 'smart') {
+          delete this.moduleConstraints[module].fileContent;
+          delete this.moduleConstraints[module].fileName;
+          delete this.moduleConstraints[module].rules;
+        }
+        this.render();
+      }
+    }));
+
+    // 使用默认约束按钮
+    document.querySelectorAll('.use-default-rules-btn').forEach(btn => btn.addEventListener('click', () => {
+      const module = (btn as HTMLElement).dataset.mcmodule as string;
+      if (module && DEFAULT_COMPANY_RULES[this.companyType]?.[module]) {
+        if (!this.moduleConstraints[module]) this.moduleConstraints[module] = { mode: 'rules' };
+        this.moduleConstraints[module].mode = 'rules';
+        this.moduleConstraints[module].rules = DEFAULT_COMPANY_RULES[this.companyType][module];
         this.render();
       }
     }));
@@ -2169,15 +2293,15 @@ export class ReviewAssistant {
       const isFile = fileInput && !fileInput.classList.contains('hidden');
       const title = titleEl?.value.trim(); const targetReviewType = (titleEl?.dataset.targetReviewType||'comprehensive') as ReviewType; const content = contentEl?.value.trim(); const url = urlEl?.value.trim();
       if(!title){alert('请输入标题');return;} const tc=REVIEW_TYPES[targetReviewType];
-      if(isUrl){if(!url){alert('请输入链接');return;} this.addKnowledgeEntry({id:`k-${Date.now()}`,title,type:'url',url,targetDataset:tc.dataset,targetReviewType,createdAt:new Date().toISOString()});}
+      if(isUrl){if(!url){alert('请输入链接');return;} this.addKnowledgeEntry({id:`k-${Date.now()}`,title,type:'url',url,targetDataset:tc.dataset,targetReviewType,companyType:this.knowledgeCompanyType,createdAt:new Date().toISOString()});}
       else if(isFile){
         const fileText = this.knowledgeFileContent;
         if(!fileText){alert('请先选择文件并等待解析完成');return;}
-        this.addKnowledgeEntry({id:`k-${Date.now()}`,title,type:'text',content:fileText,targetDataset:tc.dataset,targetReviewType,createdAt:new Date().toISOString()});
+        this.addKnowledgeEntry({id:`k-${Date.now()}`,title,type:'text',content:fileText,targetDataset:tc.dataset,targetReviewType,companyType:this.knowledgeCompanyType,createdAt:new Date().toISOString()});
         this.knowledgeFileContent=''; this.knowledgeFileName='';
         const fileInfo=document.getElementById('knowledgeFileInfo'); if(fileInfo) fileInfo.classList.add('hidden');
       }
-      else{if(!content){alert('请输入内容');return;} this.addKnowledgeEntry({id:`k-${Date.now()}`,title,type:'text',content,targetDataset:tc.dataset,targetReviewType,createdAt:new Date().toISOString()});}
+      else{if(!content){alert('请输入内容');return;} this.addKnowledgeEntry({id:`k-${Date.now()}`,title,type:'text',content,targetDataset:tc.dataset,targetReviewType,companyType:this.knowledgeCompanyType,createdAt:new Date().toISOString()});}
       titleEl.value='';contentEl.value='';urlEl.value='';
     });
     document.querySelectorAll('[data-kremove]').forEach(btn => btn.addEventListener('click', e => { const id=(e.currentTarget as HTMLElement).dataset.kremove; if(id) this.removeKnowledgeEntry(id); }));
@@ -2249,9 +2373,10 @@ export class ReviewAssistant {
       const password = (document.getElementById('newPassword') as HTMLInputElement)?.value.trim();
       const displayName = (document.getElementById('newDisplayName') as HTMLInputElement)?.value.trim();
       const role = (document.getElementById('newRole') as HTMLSelectElement)?.value;
+      const companyType = (document.getElementById('newCompanyType') as HTMLSelectElement)?.value;
       if(!username){alert('请输入用户名');return;}
       try {
-        const res = await fetch('/api/users',{method:'POST',headers:this.authHeaders(),body:JSON.stringify({username,password:password||'123456',role,displayName:displayName||username})});
+        const res = await fetch('/api/users',{method:'POST',headers:this.authHeaders(),body:JSON.stringify({username,password:password||'123456',role,companyType:companyType||'general',displayName:displayName||username})});
         const data = await res.json();
         if(data.success){alert('创建成功！');this.loadManagedUsers();}else{alert(data.error||'创建失败');}
       } catch{alert('创建失败');}
@@ -2272,11 +2397,14 @@ export class ReviewAssistant {
       try { const res = await fetch(`/api/users/${uid}`,{method:'DELETE',headers:this.authHeaders()}); const data = await res.json(); if(data.success){alert('已删除');this.loadManagedUsers();}else{alert(data.error||'删除失败');} } catch{alert('删除失败');}
     }));
     document.querySelectorAll('.edit-user-btn').forEach(btn => btn.addEventListener('click', async () => {
-      const uid = (btn as HTMLElement).dataset.uid; const uname = (btn as HTMLElement).dataset.uname; const dname = (btn as HTMLElement).dataset.dname; const urole = (btn as HTMLElement).dataset.urole;
+      const uid = (btn as HTMLElement).dataset.uid; const uname = (btn as HTMLElement).dataset.uname; const dname = (btn as HTMLElement).dataset.dname; const urole = (btn as HTMLElement).dataset.urole; const ucompany = (btn as HTMLElement).dataset.ucompany || 'general';
       const newDisplayName = prompt('修改显示名：', dname); if(newDisplayName===null) return;
       const newRole = confirm('点击"确定"设为管理员，"取消"保持当前角色') ? 'admin' : urole;
+      const companyOptions = ['general', 'supervisor', 'construction'];
+      const companyInput = prompt(`选择单位类型（输入数字）：\n1. 总包单位\n2. 监理单位\n3. 施工单位\n当前：${COMPANY_TYPES[ucompany]?.label||'总包单位'}`, companyOptions.indexOf(ucompany)+1+'');
+      const newCompanyType = companyInput && companyOptions[parseInt(companyInput)-1] ? companyOptions[parseInt(companyInput)-1] : ucompany;
       try {
-        const res = await fetch(`/api/users/${uid}`,{method:'PUT',headers:this.authHeaders(),body:JSON.stringify({displayName:newDisplayName,role:newRole})});
+        const res = await fetch(`/api/users/${uid}`,{method:'PUT',headers:this.authHeaders(),body:JSON.stringify({displayName:newDisplayName,role:newRole,companyType:newCompanyType})});
         const data = await res.json(); if(data.success){alert('已更新');this.loadManagedUsers();}else{alert(data.error||'修改失败');}
       } catch{alert('修改失败');}
     }));

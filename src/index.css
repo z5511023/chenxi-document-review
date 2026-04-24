@@ -83,6 +83,10 @@
   .history-item { padding: 10px; border-radius: 6px; border: 1px solid #f1f5f9; cursor: pointer; }
   .history-item:hover { border-color: #e2e8f0; background: #f8fafc; }
 
+  /* Company type button */
+  .company-type-btn { cursor: pointer; }
+  .company-type-btn.active { font-weight: 600; }
+
   /* Spin */
   @keyframes spin { to { transform: rotate(360deg); } }
   .animate-spin { animation: spin 1s linear infinite; }
