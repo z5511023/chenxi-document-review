@@ -130,7 +130,12 @@ const REVIEW_PROMPTS: Record<string, string> = {
 3. 质量控制措施是否到位
 4. 安全技术措施是否完善
 5. 技术标准引用的准确性（现行有效）
-6. 审批签字流程的合规性（编制→审核→批准三级审批）
+6. 审批签字流程的合规性：
+   - 编制→审核→批准三级审批签字是否齐全，有无空签
+   - 项目技术负责人、项目经理签字是否到位
+   - 签字日期逻辑是否合理（批准日期≥审核日期≥编制日期）
+   - 电子签章是否已确认，线下盖章是否完整
+   - 监理工程师审查意见及签认是否齐全
 
 请严格根据知识库中的技术文件标准进行审核，以JSON格式返回，包含annotatedContent字段。`,
 
@@ -295,9 +300,10 @@ function normalizeCJKSpaces(text: string): string {
 /**
  * 智能跳过报审单和目录，保留全部正文
  * 工程文件通常结构：报审单 → 目录 → 正文（第1章、第2章...）
- * 只跳过报审单和目录，正文必须完整保留
+ * 不再跳过报审单，而是分离出报审单部分供专项审核
+ * 仅跳过纯目录部分
  */
-function skipApprovalAndTOC(content: string): { skipped: string; body: string } {
+function skipApprovalAndTOC(content: string): { approvalForm: string; skipped: string; body: string } {
   // 报审单的典型关键词
   const approvalKeywords = ['方案报审表', '报审表', '报审单', '施工报审', '审批表'];
   // 目录的典型关键词
@@ -306,6 +312,7 @@ function skipApprovalAndTOC(content: string): { skipped: string; body: string } 
   // 按"==="分割（前端多文件上传时的分隔符）
   const fileSections = content.split('\n\n---\n\n');
 
+  const approvalParts: string[] = [];
   const skippedParts: string[] = [];
   const bodyParts: string[] = [];
 
@@ -320,7 +327,7 @@ function skipApprovalAndTOC(content: string): { skipped: string; body: string } 
 
     // 如果整个 section 是报审单（文件名包含报审，或归一化后的内容以报审开头）
     if (approvalKeywords.some(kw => fileName.includes(kw) || normalizedContent.includes(kw))) {
-      // 尝试只跳过报审单部分，保留后续正文
+      // 分离报审单部分和后续正文，报审单不再跳过，而是单独送审
       const lines = fileContent.split('\n');
       let approvalEnd = 0;
       let foundApproval = false;
@@ -335,10 +342,11 @@ function skipApprovalAndTOC(content: string): { skipped: string; body: string } 
         }
       }
       if (approvalEnd > 0) {
-        skippedParts.push(lines.slice(0, approvalEnd).join('\n'));
+        // 报审单单独提取，正文保留
+        approvalParts.push(`=== ${fileName}（报审单） ===\n${lines.slice(0, approvalEnd).join('\n')}`);
         bodyParts.push(`=== ${fileName} ===\n${lines.slice(approvalEnd).join('\n')}`);
       } else {
-        // 无法分离报审单，保留全部
+        // 无法分离，全部保留（不跳过）
         bodyParts.push(section);
       }
       continue;
@@ -376,6 +384,7 @@ function skipApprovalAndTOC(content: string): { skipped: string; body: string } 
   }
 
   return {
+    approvalForm: approvalParts.join('\n'),
     skipped: skippedParts.join('\n'),
     body: bodyParts.join('\n\n---\n\n'),
   };
@@ -384,6 +393,101 @@ function skipApprovalAndTOC(content: string): { skipped: string; body: string } 
 interface ContentChunk {
   title: string;
   content: string;
+}
+
+// 签字/盖章审核关键词
+const SIGNATURE_KEYWORDS = [
+  '编制', '审核', '批准', '审批', '签发', '校核', '审查', '审定',
+  '项目技术负责人', '项目经理', '总监理工程师', '专业监理工程师',
+  '施工项目经理', '技术负责人', '安全负责人', '质量负责人',
+  '签字', '签名', '签章', '盖章', '印章', '电子签章', '电子章',
+  '执业印章', '注册章', '公章', '项目负责人',
+];
+
+// 报审单专项审核函数
+async function reviewApprovalForm(
+  approvalContent: string,
+  basePrompt: string,
+  fileName: string,
+  reviewMode: string,
+  customHeaders: Record<string, string>,
+): Promise<Record<string, unknown>> {
+  const approvalPrompt = basePrompt + `
+
+【报审单/签字盖章专项审核指令】
+这是工程文件的报审单/审批表部分，请重点审核以下内容：
+
+一、签字栏完整性审核（必检项）
+1. 逐行检查每个签字栏位：编制人、审核人、批准人、项目经理、技术负责人等，是否有空白未签的栏位
+2. 签字顺序是否合规：编制 → 审核 → 批准，不可越级或缺失
+3. 三级审批制度：编制人（施工方技术员）→ 审核人（施工方技术负责人）→ 批准人（施工方项目经理），缺一不可
+
+二、日期审核
+1. 每个签字栏位是否标注日期
+2. 日期逻辑：批准日期 ≥ 审核日期 ≥ 编制日期，不可倒置
+3. 日期格式是否统一
+
+三、签章/印章审核
+1. 电子签章：检查是否有"已盖章"/"电子签章"标识，无标识则标注"⚠️未检测到电子签章，需后台确认"
+2. 线下盖章：检查是否有"（盖章）"/"印章"位置标记，空缺则标注"❌缺失公章/执业印章"
+3. 执业资格签章：总监理工程师、专业监理工程师等需加盖执业印章的位置是否齐全
+
+四、监理审核签认
+1. 监理审查意见栏是否有监理工程师签字
+2. 总监理工程师是否签字确认
+3. 如有"不同意"/"修改后重新报审"等意见，是否跟进处理
+
+五、报审单格式规范性
+1. 编号是否完整
+2. 工程名称、施工单位等基本信息是否与正文一致
+3. 报审日期是否合理
+
+请以JSON格式返回审核结果，包含annotatedContent（在原文中标注问题）。`;
+
+  const messages = [
+    { role: 'system' as const, content: approvalPrompt },
+    { role: 'user' as const, content: `请审核以下报审单/审批表：\n\n文件名：${fileName}\n审核模式：${reviewMode}\n\n报审单内容：\n${approvalContent}` },
+  ];
+
+  let fullContent = '';
+  try {
+    const config = new LLMConfig();
+    const client = new LLMClient(config, customHeaders);
+    const stream = client.stream(messages, {
+      model: 'doubao-seed-2-0-pro-260215',
+      temperature: 0.2,
+    });
+    for await (const chunk of stream) {
+      if (chunk.content) fullContent += chunk.content.toString();
+    }
+  } catch (llmError) {
+    console.error('[报审单审核] LLM调用失败:', llmError);
+    return {
+      conclusion: 'warning', score: 70,
+      issues: [{ level: 'medium', title: '报审单审核失败', description: 'AI服务暂时不可用', category: 'other' }],
+      suggestions: ['建议人工复核报审单签字盖章'],
+      annotatedContent: approvalContent,
+    };
+  }
+
+  try {
+    const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const result = JSON.parse(jsonMatch[0]);
+      if (!result.annotatedContent) result.annotatedContent = approvalContent;
+      return result;
+    }
+  } catch {
+    // fall through
+  }
+
+  return {
+    conclusion: 'warning', score: 70,
+    issues: [{ level: 'medium', title: '报审单审核结果解析失败', description: '请人工复核', category: 'other' }],
+    suggestions: ['建议人工复核报审单'],
+    annotatedContent: approvalContent,
+    details: fullContent,
+  };
 }
 
 /**
@@ -490,6 +594,7 @@ function mergeSegmentResults(
   segments: Array<Record<string, unknown>>,
   originalContent: string,
   skippedContent: string,
+  approvalResult: Record<string, unknown> | null = null,
 ): Record<string, unknown> {
   if (segments.length === 1) {
     const r = { ...segments[0] };
@@ -556,11 +661,34 @@ function mergeSegmentResults(
     allReferences.push(...refs);
   }
 
-  // 如果有跳过的报审单/目录，在标注内容开头添加说明
+  // 如果有跳过的目录，在标注内容开头添加说明
   let fullAnnotated = '';
   if (skippedContent.trim()) {
-    fullAnnotated = `[已跳过报审单/目录部分，共 ${skippedContent.length} 字符]\n\n`;
+    fullAnnotated = `[已跳过目录部分，共 ${skippedContent.length} 字符]\n\n`;
   }
+
+  // 合并报审单审核结果（放在最前面）
+  if (approvalResult) {
+    const approvalAnnotated = (approvalResult.annotatedContent as string) || '';
+    if (approvalAnnotated) {
+      fullAnnotated += `\n=== 报审单审核 ===\n${approvalAnnotated}\n\n`;
+    }
+    const approvalIssues = (approvalResult.issues as Array<Record<string, unknown>>) || [];
+    for (const issue of approvalIssues) {
+      allIssues.unshift({ ...issue, title: `[报审单] ${issue.title}` });
+    }
+    const approvalSuggestions = (approvalResult.suggestions as string[]) || [];
+    for (const s of approvalSuggestions) {
+      if (!allSuggestions.includes(s)) allSuggestions.unshift(s);
+    }
+    const approvalScore = (approvalResult.score as number) || 70;
+    if (approvalScore < minScore) minScore = approvalScore;
+    const approvalConclusion = (approvalResult.conclusion as string) || 'warning';
+    if (approvalConclusion === 'fail' || (approvalConclusion === 'warning' && worstConclusion === 'pass')) {
+      worstConclusion = approvalConclusion;
+    }
+  }
+
   fullAnnotated += allAnnotated.join('\n\n');
 
   // 限制标注内容长度（避免数据库字段溢出）
@@ -1246,19 +1374,19 @@ router.delete('/api/users/:id', requireAdmin, async (req: Request, res: Response
 			    baseSystemPrompt += contextSection;
 
 			    const CHUNK_SIZE = reviewMode === 'detailed' ? 60000 : 40000;
-			    const { skipped, body } = skipApprovalAndTOC(fileContent);
+			    const { approvalForm, skipped, body } = skipApprovalAndTOC(fileContent);
 
+			    // 文字约束前移：放在基础prompt开头，提升LLM注意力权重
 			    const reqBody = req.body as Record<string, unknown>;
 			    const constraintMode = reqBody.constraintMode as string | undefined;
 			    const constraintContent = reqBody.constraintContent as string | undefined;
 			    if (constraintMode === 'rules' && constraintContent) {
-			      baseSystemPrompt += `
-
-【审核依据 - 文字约束（PROMPT）】
-请严格按照以下约束条件审核文件，对不符合约束的地方进行标注：
-${constraintContent}`;
+			      baseSystemPrompt = `【审核依据 - 文字约束（PROMPT）】\n请严格按照以下约束条件审核文件，对不符合约束的地方进行标注：\n${constraintContent}\n\n--- 以上为文字约束 ---\n\n` + baseSystemPrompt;
 			    }
-			    console.log(`[分段审核] 原文 ${fileContent.length} 字符，跳过报审单/目录 ${skipped.length} 字符，正文 ${body.length} 字符`);
+			    console.log(`[分段审核] 原文 ${fileContent.length} 字符，报审单 ${approvalForm.length} 字符，目录 ${skipped.length} 字符，正文 ${body.length} 字符`);
+
+			    // === 报审单专项审核 ===
+			    const approvalResult: Record<string, unknown> | null = approvalForm.trim() ? await reviewApprovalForm(approvalForm, baseSystemPrompt, fileName, reviewMode, customHeaders) : null;
 
 			    const chunks = splitByChapter(body, CHUNK_SIZE);
 			    console.log(`[分段审核] 拆分为 ${chunks.length} 段，段长: ${chunks.map(c => c.content.length).join(', ')}`);
@@ -1333,7 +1461,7 @@ ${constraintContent}`;
 			      sendSSE('segment', { segment: i + 1, totalSegments: chunks.length, score: segResult.score });
 			    }
 
-			    const result = mergeSegmentResults(segmentResults, fileContent, skipped);
+			    const result = mergeSegmentResults(segmentResults, fileContent, skipped, approvalResult);
 
 			    // 页码验证：确保 LLM 输出的页码与文本中实际的【第N页】标记一致，防止幻觉页码
 			    const validPageNumbers = new Set<number>();

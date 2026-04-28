@@ -170,6 +170,124 @@ export const DEFAULT_COMPANY_RULES: Record<string, Record<string, string>> = {
 };
 
 
+// ==================== 模拟数据生成器（面试展示用） ====================
+const MOCK_SURNAMES = '赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳鲍史唐费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平黄和穆萧尹姚邵湛汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯昝管卢莫经房裘缪干解应宗丁宣贲邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴陆荣翁荀羊於惠甄曲家封芮羿储靳汲邴糜松井段富巫乌焦巴弓牧隗山谷车侯宓蓬全郗班仰秋仲伊宫宁仇栾暴甘钭厉戎祖武符刘景詹束龙叶幸司韶郜黎蓟薄印宿白怀蒲邰从鄂索咸籍赖卓蔺屠蒙池乔阴郁胥能苍双闻莘党翟谭贡劳逄姬申扶堵冉宰郦雍却璩桑桂濮牛寿通边扈燕冀郏浦尚农温别庄晏柴瞿阎充慕连茹习宦艾鱼容向古易慎戈廖庾终暨居衡步都耿满弘匡国文寇广禄阙东欧殳沃利蔚越夔隆师巩厍聂晁勾敖融冷訾辛阚那简饶空曾毋沙乜养鞠须丰巢关蒯相查后荆红游竺权逯盖益桓公';
+const MOCK_NAMES_MID = '志建文武德明永强建华建军建国建文建平建明建强建林建伟建业建中建信建忠建良建荣昌盛茂兴富贵荣华安康宁平和顺良善吉庆福禄寿喜财旺发达通达贤能仁义礼智信忠孝廉毅刚勇健凯胜伟宏博浩杰豪翔鹏飞龙跃峰松海波涛澜清泉润泽霖雨风雷云天星辰光晨旭辉阳晓曦耀煜炜烨焕昭亮朗哲慧聪睿明思语诗书章文才学儒雅谦逊';
+const MOCK_GIVEN_NAMES = '伟强磊军勇杰涛明超华刚平辉国鹏飞龙翔宇浩博天昊然晨旭阳光亮辉耀景庆瑞祥安康宁鑫鹏程远志学海文彬斌武东林森山江海川峰岩松峰磊鑫鹏达利顺通成荣盛旺兴宏威毅坚坤磊鑫阳霖雨鑫浩';
+
+function randomChineseName(): string {
+  const surname = MOCK_SURNAMES[Math.floor(Math.random() * MOCK_SURNAMES.length)];
+  const nameLen = Math.random() > 0.4 ? 2 : 1;
+  let given = '';
+  for (let i = 0; i < nameLen; i++) {
+    given += MOCK_GIVEN_NAMES[Math.floor(Math.random() * MOCK_GIVEN_NAMES.length)];
+  }
+  return surname + given;
+}
+
+const MOCK_FILE_NAMES = [
+  '地下厂房开挖施工方案', '引水隧洞衬砌施工方案', '上水库大坝填筑方案',
+  '下水库导流洞施工方案', '高压管道安装施工方案', '混凝土温控施工方案',
+  '高边坡支护施工方案', '施工围堰设计与施工方案', '机电安装施工方案',
+  '金属结构制作安装方案', '压力钢管制作安装方案', '隧洞爆破开挖施工方案',
+  '基础处理施工方案', '防渗工程施工方案', '土石方平衡与调配方案',
+  '安全文明施工方案', '防汛度汛应急预案', '冬季施工专项方案',
+  '夏季施工专项方案', '临时用电施工方案', '脚手架搭设施工方案',
+  '模板支撑施工方案', '深基坑开挖支护方案', '大体积混凝土施工方案',
+  '预应力锚索施工方案', '灌浆工程施工方案', '帷幕灌浆施工方案',
+  '固结灌浆施工方案', '回填灌浆施工方案', '接地装置施工方案',
+  '通风空调施工方案', '给排水施工方案', '消防工程施工方案',
+  '起重吊装施工方案', '有限空间作业方案', '高处作业专项方案',
+  '爆破安全管理方案', '隧洞通风防尘方案', '混凝土配合比设计',
+  '钢筋工程施工方案', '模板工程施工方案', '防水工程施工方案',
+  '防腐涂装施工方案', '沉降观测方案', '变形监测方案',
+  '质量检测方案', '安全风险评估报告', '环境影响评价报告',
+  '水土保持方案', '施工组织总设计', '施工总进度计划',
+];
+
+const REVIEW_TYPE_KEYS: ReviewType[] = ['personnel', 'enterprise', 'technical', 'safety', 'document', 'comprehensive'];
+const COMPANY_TYPE_KEYS: string[] = ['general', 'supervisor', 'construction'];
+
+interface MockUserData {
+  id: string;
+  username: string;
+  display_name: string;
+  role: string;
+  company_type: string;
+  created_at: string;
+  reviewCount: number;
+}
+
+function generateMockUsers(count: number): MockUserData[] {
+  const usedNames = new Set<string>();
+  const users: MockUserData[] = [];
+  for (let i = 0; i < count; i++) {
+    let name: string;
+    do { name = randomChineseName(); } while (usedNames.has(name));
+    usedNames.add(name);
+    const compType = COMPANY_TYPE_KEYS[Math.floor(Math.random() * COMPANY_TYPE_KEYS.length)];
+    users.push({
+      id: `mock-${i.toString().padStart(3, '0')}`,
+      username: `user_${(i + 1).toString().padStart(3, '0')}`,
+      display_name: name,
+      role: Math.random() > 0.92 ? 'admin' : 'user',
+      company_type: compType,
+      created_at: new Date(Date.now() - Math.random() * 180 * 86400000).toISOString(),
+      reviewCount: 50 + Math.floor(Math.random() * 51), // 50-100
+    });
+  }
+  return users;
+}
+
+function generateMockHistory(users: MockUserData[]): ReviewHistory[] {
+  const allHistory: ReviewHistory[] = [];
+  const now = Date.now();
+  for (const user of users) {
+    for (let j = 0; j < user.reviewCount; j++) {
+      const rType = REVIEW_TYPE_KEYS[Math.floor(Math.random() * REVIEW_TYPE_KEYS.length)];
+      const rMode: ReviewMode = Math.random() > 0.6 ? 'detailed' : 'quick';
+      const score = 55 + Math.floor(Math.random() * 40);
+      const conclusion: 'pass' | 'fail' | 'warning' = score >= 80 ? 'pass' : score >= 65 ? 'warning' : 'fail';
+      const status: 'completed' | 'failed' = Math.random() > 0.05 ? 'completed' : 'failed';
+      const daysAgo = Math.floor(Math.random() * 180);
+      const createdAt = new Date(now - daysAgo * 86400000 - Math.floor(Math.random() * 86400000)).toISOString();
+      const issueCount = conclusion === 'pass' ? Math.floor(Math.random() * 3) : conclusion === 'warning' ? 2 + Math.floor(Math.random() * 5) : 5 + Math.floor(Math.random() * 8);
+
+      allHistory.push({
+        id: `mock-hist-${user.id}-${j}`,
+        file_name: MOCK_FILE_NAMES[Math.floor(Math.random() * MOCK_FILE_NAMES.length)] + (Math.random() > 0.5 ? `.pdf` : `.docx`),
+        review_type: rType,
+        review_mode: rMode,
+        user_role: user.company_type as Role,
+        status,
+        created_at: createdAt,
+        result: status === 'completed' ? {
+          conclusion,
+          score,
+          issues: Array.from({ length: issueCount }, (_, k) => ({
+            level: (['high', 'medium', 'low'] as const)[Math.floor(Math.random() * 3)],
+            title: ['格式不规范', '错别字', '过期规范引用', '参数不合规', '内容缺失', '签字栏空白'][Math.floor(Math.random() * 6)],
+            description: '模拟审核问题',
+            suggestion: '请修改',
+            category: (['format', 'typo', 'outdated_standard', 'non_compliant', 'missing', 'other'] as const)[Math.floor(Math.random() * 6)],
+          })),
+          suggestions: ['建议人工复核'],
+          details: '',
+        } : undefined,
+      });
+    }
+  }
+  // 按时间倒序排列
+  allHistory.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  return allHistory;
+}
+
+// 生成一次，整个应用生命周期复用
+const MOCK_USERS = generateMockUsers(55);
+const MOCK_HISTORY = generateMockHistory(MOCK_USERS);
+const MOCK_TOTAL_REVIEWS = MOCK_USERS.reduce((s, u) => s + u.reviewCount, 0);
+
+
 export class ReviewAssistant {
   private currentUser: AuthUser | null = null;
   private token: string | null = null;
@@ -339,7 +457,11 @@ export class ReviewAssistant {
     try {
       const response = await fetch('/api/reviews?limit=20', { headers: this.authHeaders() });
       const data = await response.json();
-      if (data.success && data.data) { this.history = data.data; this.render(); }
+      // 合并真实历史和模拟历史（模拟数据在前，面试展示用）
+      const realHistory: ReviewHistory[] = (data.success && data.data) ? data.data : [];
+      const mockSlice = MOCK_HISTORY.slice(0, 80); // 取最近80条模拟记录
+      this.history = [...mockSlice, ...realHistory];
+      this.render();
     } catch (error) { console.error('加载历史记录失败:', error); }
   }
 
@@ -348,7 +470,15 @@ export class ReviewAssistant {
     try {
       const response = await fetch('/api/users', { headers: this.authHeaders() });
       const data = await response.json();
-      if (data.success) { this.managedUsers = data.users; this.render(); }
+      const realUsers: ManagedUser[] = data.success ? data.users : [];
+      // 合并真实用户和模拟用户（面试展示用）
+      const mockManagedUsers: ManagedUser[] = MOCK_USERS.map(u => ({
+        id: u.id, username: u.username, role: u.role,
+        display_name: u.display_name, company_type: u.company_type,
+        created_at: u.created_at,
+      }));
+      this.managedUsers = [...mockManagedUsers, ...realUsers];
+      this.render();
     } catch (error) { console.error('加载用户列表失败:', error); }
   }
 
@@ -389,8 +519,8 @@ export class ReviewAssistant {
         </div>
       </div>
       <div class="border-t pt-2 space-y-1" style="border-color:var(--c-border-light)">
-        <div class="flex justify-between"><span class="text-slate-500">用户表</span><span class="font-medium text-slate-700">${s.tables?.users?.count ?? 0} 条</span></div>
-        <div class="flex justify-between"><span class="text-slate-500">审核记录表</span><span class="font-medium text-slate-700">${s.tables?.review_records?.count ?? 0} 条</span></div>
+        <div class="flex justify-between"><span class="text-slate-500">用户表</span><span class="font-medium text-slate-700">${(s.tables?.users?.count ?? 0) + MOCK_USERS.length} 条</span></div>
+        <div class="flex justify-between"><span class="text-slate-500">审核记录表</span><span class="font-medium text-slate-700">${(s.tables?.review_records?.count ?? 0) + MOCK_TOTAL_REVIEWS} 条</span></div>
       </div>
     `;
   }
@@ -400,11 +530,28 @@ export class ReviewAssistant {
     try {
       const res = await fetch('/api/usage-logs', { headers: this.authHeaders() });
       const data = await res.json();
-      if (data.success && data.data) {
-        this.usageLogs = data.data;
-        this.usageLogsTotal = data.totalRecords || 0;
-        this.renderUsageLogs();
-      }
+      const realLogs = (data.success && data.data) ? data.data : [];
+
+      // 生成模拟使用记录（面试展示用）
+      const mockLogs = MOCK_USERS.map(u => {
+        const userRecords = MOCK_HISTORY.filter(h => h.id.startsWith(`mock-hist-${u.id}-`));
+        return {
+          user: { username: u.username, displayName: u.display_name, role: u.role },
+          totalCount: u.reviewCount,
+          recentRecords: userRecords.slice(0, 20).map(r => ({
+            id: r.id,
+            fileName: r.file_name,
+            reviewType: r.review_type,
+            reviewMode: r.review_mode,
+            status: r.status,
+            createdAt: r.created_at,
+          })),
+        };
+      });
+
+      this.usageLogs = [...mockLogs, ...realLogs];
+      this.usageLogsTotal = MOCK_TOTAL_REVIEWS + (data.totalRecords || 0);
+      this.renderUsageLogs();
     } catch (error) { console.error('加载使用记录失败:', error); }
   }
 
