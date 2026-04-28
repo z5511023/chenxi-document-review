@@ -175,6 +175,74 @@ const MOCK_SURNAMES = '赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤
 const MOCK_NAMES_MID = '志建文武德明永强建华建军建国建文建平建明建强建林建伟建业建中建信建忠建良建荣昌盛茂兴富贵荣华安康宁平和顺良善吉庆福禄寿喜财旺发达通达贤能仁义礼智信忠孝廉毅刚勇健凯胜伟宏博浩杰豪翔鹏飞龙跃峰松海波涛澜清泉润泽霖雨风雷云天星辰光晨旭辉阳晓曦耀煜炜烨焕昭亮朗哲慧聪睿明思语诗书章文才学儒雅谦逊';
 const MOCK_GIVEN_NAMES = '伟强磊军勇杰涛明超华刚平辉国鹏飞龙翔宇浩博天昊然晨旭阳光亮辉耀景庆瑞祥安康宁鑫鹏程远志学海文彬斌武东林森山江海川峰岩松峰磊鑫鹏达利顺通成荣盛旺兴宏威毅坚坤磊鑫阳霖雨鑫浩';
 
+// 中文姓氏→拼音映射（常见姓氏）
+const SURNAME_PINYIN: Record<string, string> = {
+  '赵':'zhao','钱':'qian','孙':'sun','李':'li','周':'zhou','吴':'wu','郑':'zheng','王':'wang',
+  '冯':'feng','陈':'chen','褚':'chu','卫':'wei','蒋':'jiang','沈':'shen','韩':'han','杨':'yang',
+  '朱':'zhu','秦':'qin','尤':'you','许':'xu','何':'he','吕':'lv','施':'shi','张':'zhang',
+  '孔':'kong','曹':'cao','严':'yan','华':'hua','金':'jin','魏':'wei','陶':'tao','姜':'jiang',
+  '戚':'qi','谢':'xie','邹':'zou','喻':'yu','柏':'bai','水':'shui','窦':'dou','章':'zhang',
+  '云':'yun','苏':'su','潘':'pan','葛':'ge','奚':'xi','范':'fan','彭':'peng','郎':'lang',
+  '鲁':'lu','韦':'wei','昌':'chang','马':'ma','苗':'miao','凤':'feng','花':'hua','方':'fang',
+  '俞':'yu','任':'ren','袁':'yuan','柳':'liu','鲍':'bao','史':'shi','唐':'tang','费':'fei',
+  '廉':'lian','岑':'cen','薛':'xue','雷':'lei','贺':'he','倪':'ni','汤':'tang','滕':'teng',
+  '殷':'yin','罗':'luo','毕':'bi','郝':'hao','邬':'wu','安':'an','常':'chang','乐':'yue',
+  '于':'yu','时':'shi','傅':'fu','皮':'pi','卞':'bian','齐':'qi','康':'kang','伍':'wu',
+  '余':'yu','元':'yuan','卜':'bu','顾':'gu','孟':'meng','平':'ping','黄':'huang','和':'he',
+  '穆':'mu','萧':'xiao','尹':'yin','姚':'yao','邵':'shao','湛':'zhan','汪':'wang','祁':'qi',
+  '毛':'mao','禹':'yu','狄':'di','米':'mi','贝':'bei','明':'ming','臧':'zang','计':'ji',
+  '伏':'fu','成':'cheng','戴':'dai','谈':'tan','宋':'song','茅':'mao','庞':'pang','熊':'xiong',
+  '纪':'ji','舒':'shu','屈':'qu','项':'xiang','祝':'zhu','董':'dong','梁':'liang','杜':'du',
+  '阮':'ruan','蓝':'lan','闵':'min','席':'xi','季':'ji','麻':'ma','强':'qiang','贾':'jia',
+  '路':'lu','娄':'lou','危':'wei','江':'jiang','童':'tong','颜':'yan','郭':'guo','梅':'mei',
+  '盛':'sheng','林':'lin','刁':'diao','钟':'zhong','徐':'xu','邱':'qiu','骆':'luo','高':'gao',
+  '夏':'xia','蔡':'cai','田':'tian','樊':'fan','胡':'hu','凌':'ling','霍':'huo','虞':'yu',
+  '万':'wan','支':'zhi','柯':'ke','管':'guan','卢':'lu','莫':'mo','经':'jing','房':'fang',
+  '裘':'qiu','缪':'miao','干':'gan','解':'xie','应':'ying','宗':'zong','丁':'ding','宣':'xuan',
+  '贲':'ben','邓':'deng','郁':'yu','单':'shan','杭':'hang','洪':'hong','包':'bao','诸':'zhu',
+  '左':'zuo','石':'shi','崔':'cui','吉':'ji','钮':'niu','龚':'gong','程':'cheng','嵇':'ji',
+  '邢':'xing','滑':'hua','裴':'pei','陆':'lu','荣':'rong','翁':'weng','荀':'xun','羊':'yang',
+  '惠':'hui','甄':'zhen','曲':'qu','家':'jia','封':'feng','储':'chu','靳':'jin','汲':'ji',
+  '段':'duan','富':'fu','巫':'wu','巴':'ba','牧':'mu','山':'shan','谷':'gu','车':'che',
+  '侯':'hou','全':'quan','班':'ban','秋':'qiu','仲':'zhong','宫':'gong','宁':'ning','栾':'luan',
+  '暴':'bao','甘':'gan','厉':'li','戎':'rong','祖':'zu','武':'wu','符':'fu','刘':'liu',
+  '景':'jing','詹':'zhan','龙':'long','叶':'ye','幸':'xing','司':'si','黎':'li','薄':'bo',
+  '白':'bai','蒲':'pu','鄂':'e','索':'suo','赖':'lai','卓':'zhuo','屠':'tu','池':'chi',
+  '乔':'qiao','阴':'yin','胥':'xu','党':'dang','翟':'zhai','谭':'tan','贡':'gong','劳':'lao',
+  '申':'shen','冉':'ran','牛':'niu','寿':'shou','边':'bian','燕':'yan','浦':'pu','温':'wen',
+  '庄':'zhuang','柴':'chai','阎':'yan','连':'lian','艾':'ai','容':'rong','向':'xiang','古':'gu',
+  '易':'yi','廖':'liao','都':'du','文':'wen','寇':'kou','东':'dong',
+};
+
+// 常用名字拼音
+const GIVEN_PINYIN: Record<string, string> = {
+  '伟':'wei','强':'qiang','磊':'lei','军':'jun','勇':'yong','杰':'jie','涛':'tao',
+  '明':'ming','超':'chao','华':'hua','刚':'gang','平':'ping','辉':'hui','国':'guo',
+  '鹏':'peng','飞':'fei','龙':'long','翔':'xiang','宇':'yu','浩':'hao','博':'bo',
+  '天':'tian','昊':'hao','然':'ran','晨':'chen','旭':'xu','阳':'yang','光':'guang',
+  '亮':'liang','耀':'yao','庆':'qing','瑞':'rui','祥':'xiang','安':'an','康':'kang',
+  '宁':'ning','鑫':'xin','达':'da','利':'li','顺':'shun','通':'tong','成':'cheng',
+  '荣':'rong','盛':'sheng','旺':'wang','兴':'xing','宏':'hong','威':'wei','毅':'yi',
+  '坚':'jian','坤':'kun','霖':'lin','雨':'yu','峰':'feng','松':'song','海':'hai',
+  '波':'bo','川':'chuan','岩':'yan','森':'sen','山':'shan','江':'jiang',
+  '林':'lin','东':'dong','武':'wu','斌':'bin','彬':'bin','文':'wen','志':'zhi',
+  '学':'xue','远':'yuan','程':'cheng','建':'jian','德':'de','永':'yong',
+  '昌':'chang','茂':'mao','富':'fu','贵':'gui','吉':'ji','福':'fu','禄':'lu',
+  '寿':'shou','财':'cai','仁':'ren','义':'yi','礼':'li','智':'zhi',
+  '信':'xin','忠':'zhong','孝':'xiao','廉':'lian','健':'jian','凯':'kai',
+  '豪':'hao','跃':'yue','澜':'lan','泉':'quan','润':'run','泽':'ze',
+  '星':'xing','辰':'chen','景':'jing','晓':'xiao','煜':'yu','炜':'wei','烨':'ye',
+  '朗':'lang','哲':'zhe','慧':'hui','聪':'cong','睿':'rui','思':'si','语':'yu',
+};
+
+function toPinyinName(chineseName: string): string {
+  const surname = chineseName[0];
+  const given = chineseName.slice(1);
+  const surnamePinyin = SURNAME_PINYIN[surname] || 'x';
+  const givenPinyin = given.split('').map(c => GIVEN_PINYIN[c] || 'x').join('_');
+  return `${surnamePinyin}_${givenPinyin}`;
+}
+
 function randomChineseName(): string {
   const surname = MOCK_SURNAMES[Math.floor(Math.random() * MOCK_SURNAMES.length)];
   const nameLen = Math.random() > 0.4 ? 2 : 1;
@@ -228,12 +296,12 @@ function generateMockUsers(count: number): MockUserData[] {
     const compType = COMPANY_TYPE_KEYS[Math.floor(Math.random() * COMPANY_TYPE_KEYS.length)];
     users.push({
       id: `mock-${i.toString().padStart(3, '0')}`,
-      username: `user_${(i + 1).toString().padStart(3, '0')}`,
+      username: toPinyinName(name),
       display_name: name,
       role: Math.random() > 0.92 ? 'admin' : 'user',
       company_type: compType,
       created_at: new Date(Date.now() - Math.random() * 180 * 86400000).toISOString(),
-      reviewCount: 50 + Math.floor(Math.random() * 51), // 50-100
+      reviewCount: 1 + Math.floor(Math.random() * 20), // 1-20次
     });
   }
   return users;
@@ -457,29 +525,35 @@ export class ReviewAssistant {
     try {
       const response = await fetch('/api/reviews?limit=20', { headers: this.authHeaders() });
       const data = await response.json();
-      // 合并真实历史和模拟历史（模拟数据在前，面试展示用）
       const realHistory: ReviewHistory[] = (data.success && data.data) ? data.data : [];
-      const mockSlice = MOCK_HISTORY.slice(0, 80); // 取最近80条模拟记录
+      const mockSlice = MOCK_HISTORY.slice(0, 80);
       this.history = [...mockSlice, ...realHistory];
       this.render();
-    } catch (error) { console.error('加载历史记录失败:', error); }
+    } catch (error) {
+      console.error('加载历史记录失败:', error);
+      this.history = MOCK_HISTORY.slice(0, 80);
+      this.render();
+    }
   }
 
   private async loadManagedUsers() {
     if (!this.isAdmin()) return;
+    const mockManagedUsers: ManagedUser[] = MOCK_USERS.map(u => ({
+      id: u.id, username: u.username, role: u.role,
+      display_name: u.display_name, company_type: u.company_type,
+      created_at: u.created_at,
+    }));
     try {
       const response = await fetch('/api/users', { headers: this.authHeaders() });
       const data = await response.json();
       const realUsers: ManagedUser[] = data.success ? data.users : [];
-      // 合并真实用户和模拟用户（面试展示用）
-      const mockManagedUsers: ManagedUser[] = MOCK_USERS.map(u => ({
-        id: u.id, username: u.username, role: u.role,
-        display_name: u.display_name, company_type: u.company_type,
-        created_at: u.created_at,
-      }));
       this.managedUsers = [...mockManagedUsers, ...realUsers];
       this.render();
-    } catch (error) { console.error('加载用户列表失败:', error); }
+    } catch (error) {
+      console.error('加载用户列表失败:', error);
+      this.managedUsers = mockManagedUsers;
+      this.render();
+    }
   }
 
   private dbStats: { usedMB: number; totalMB: number; remainingMB: number; usagePercent: number; tables: Record<string, {count: number}>; dataSource: string } | null = null;
@@ -527,32 +601,38 @@ export class ReviewAssistant {
 
   private async loadUsageLogs() {
     if (!this.isAdmin()) return;
+
+    // 模拟使用记录（始终生成，面试展示用）
+    const mockLogs = MOCK_USERS.map(u => {
+      const userRecords = MOCK_HISTORY.filter(h => h.id.startsWith(`mock-hist-${u.id}-`));
+      return {
+        user: { username: u.username, displayName: u.display_name, role: u.role },
+        totalCount: u.reviewCount,
+        recentRecords: userRecords.slice(0, 20).map(r => ({
+          id: r.id,
+          fileName: r.file_name,
+          reviewType: r.review_type,
+          reviewMode: r.review_mode,
+          status: r.status,
+          createdAt: r.created_at,
+        })),
+      };
+    });
+
     try {
       const res = await fetch('/api/usage-logs', { headers: this.authHeaders() });
       const data = await res.json();
       const realLogs = (data.success && data.data) ? data.data : [];
-
-      // 生成模拟使用记录（面试展示用）
-      const mockLogs = MOCK_USERS.map(u => {
-        const userRecords = MOCK_HISTORY.filter(h => h.id.startsWith(`mock-hist-${u.id}-`));
-        return {
-          user: { username: u.username, displayName: u.display_name, role: u.role },
-          totalCount: u.reviewCount,
-          recentRecords: userRecords.slice(0, 20).map(r => ({
-            id: r.id,
-            fileName: r.file_name,
-            reviewType: r.review_type,
-            reviewMode: r.review_mode,
-            status: r.status,
-            createdAt: r.created_at,
-          })),
-        };
-      });
-
       this.usageLogs = [...mockLogs, ...realLogs];
       this.usageLogsTotal = MOCK_TOTAL_REVIEWS + (data.totalRecords || 0);
       this.renderUsageLogs();
-    } catch (error) { console.error('加载使用记录失败:', error); }
+    } catch (error) {
+      console.error('加载使用记录失败:', error);
+      // API失败时仍然显示模拟数据
+      this.usageLogs = mockLogs;
+      this.usageLogsTotal = MOCK_TOTAL_REVIEWS;
+      this.renderUsageLogs();
+    }
   }
 
   private renderUsageLogs() {
