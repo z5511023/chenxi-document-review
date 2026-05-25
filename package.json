@@ -1,7 +1,7 @@
 {
-  "name": "projects",
+  "name": "chenxi-document-review",
   "version": "1.0.0",
-  "description": "Vanilla TypeScript application with Express + Vite (HTML + CSS + TS + Node API)",
+  "description": "政企工程文件 AI 智能审核助手：Vite + TypeScript + Express + Supabase + Coze Knowledge，可扩展为私有化 RAG 架构",
   "scripts": {
     "build": "bash ./scripts/build.sh",
     "dev": "bash ./scripts/dev.sh",
